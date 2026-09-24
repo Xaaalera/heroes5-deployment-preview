@@ -1,0 +1,3 @@
+-r devkit/requirements-dev.txt
+pefile==2024.8.26
+capstone==5.0.9

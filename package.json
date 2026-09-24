@@ -1,0 +1,20 @@
+{
+  "name": "heroes5-deployment-preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "python -X utf8 scripts/check.py",
+    "prepare": "node devkit/scripts/install-hooks.mjs",
+    "review:info": "node devkit/scripts/review-check.mjs --info",
+    "review:gate": "node devkit/scripts/review-check.mjs",
+    "review:secrets": "review-gate --secrets-only",
+    "review:attest": "node devkit/scripts/review-check.mjs --attest"
+  },
+  "devDependencies": {
+    "bladeforge-review-harness": "0.3.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

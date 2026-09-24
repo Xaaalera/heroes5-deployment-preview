@@ -1,0 +1,14 @@
+.local/
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+.env
+.env.*
+*.h5u
+*.h5m
+*.pak
+*.dll
+*.exe
+*.pdb
+.review/work/
