@@ -1,6 +1,6 @@
 ﻿#include <windows.h>
 #include <tlhelp32.h>
-#include <bcrypt.h>
+#include "player_launch.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -13,6 +13,7 @@
 namespace {
 
 HANDLE startedProcess = nullptr;
+bool playerMode = false;
 
 struct Arguments {
     DWORD processId{};
@@ -20,6 +21,7 @@ struct Arguments {
     std::filesystem::path gamePath;
     bool projectionTrace{};
     bool prepareStdin{};
+    bool checkOnly{};
 };
 
 void Fail(const std::wstring& message) {
@@ -28,61 +30,16 @@ void Fail(const std::wstring& message) {
         TerminateProcess(startedProcess, 1);
         WaitForSingleObject(startedProcess, 5000);
     }
+    if (playerMode) { MessageBoxW(nullptr, message.c_str(), L"Deployment predictor", MB_OK | MB_ICONERROR); }
     ExitProcess(1);
-}
-
-void VerifyGame(const std::filesystem::path& executable) {
-    if (_wcsicmp(executable.filename().c_str(), L"H5_Game.exe") != 0) {
-        Fail(L"Expected H5_Game.exe");
-    }
-    const std::pair<const wchar_t*, const char*> binaries[] = {
-        {L"H5_Game.exe", "88c9dc6107b9bced0649924a86360f1c56397ee00de0413f6f2b08f865ed5519"},
-        {L"uni.dll", "aa5211151d9e9a8c135e180ff8832908d128ccae08a5145162bcdae4946c18ee"},
-        {L"um.dll", "1956c00b371d22a3e1a644394ff3e7159b6ec36d660d5ffa36628fcf63fd0fc6"},
-        {L"d3d9.dll", "5eb152357f99d53397b764384d5cf9a0f6aece733ced30a34186ac57fb15be25"},
-    };
-    BCRYPT_ALG_HANDLE algorithm{};
-    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) {
-        Fail(L"Cannot initialize SHA-256");
-    }
-    for (const auto& [name, expected] : binaries) {
-        std::ifstream file(executable.parent_path() / name, std::ios::binary);
-        if (!file) {
-            Fail(std::wstring(L"Cannot read Universe binary: ") + name);
-        }
-        BCRYPT_HASH_HANDLE hash{};
-        if (BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0) != 0) {
-            Fail(L"Cannot create SHA-256 hash");
-        }
-        std::array<unsigned char, 65536> buffer{};
-        while (file) {
-            file.read(reinterpret_cast<char*>(buffer.data()), buffer.size());
-            if (file.gcount() != 0 && BCryptHashData(hash, buffer.data(), static_cast<ULONG>(file.gcount()), 0) != 0) {
-                Fail(L"Cannot hash Universe binary");
-            }
-        }
-        if (!file.eof()) {
-            Fail(std::wstring(L"Failed reading Universe binary: ") + name);
-        }
-        std::array<unsigned char, 32> digest{};
-        if (BCryptFinishHash(hash, digest.data(), digest.size(), 0) != 0) {
-            Fail(L"Cannot finish SHA-256 hash");
-        }
-        BCryptDestroyHash(hash);
-        std::string actual;
-        for (const auto byte : digest) {
-            actual += "0123456789abcdef"[byte >> 4];
-            actual += "0123456789abcdef"[byte & 15];
-        }
-        if (actual != expected) {
-            Fail(std::wstring(L"Unsupported Universe binary: ") + name);
-        }
-    }
-    BCryptCloseAlgorithmProvider(algorithm, 0);
 }
 
 Arguments ParseArguments(int count, wchar_t* values[]) {
     Arguments arguments;
+    if (count == 1) {
+        arguments.gamePath = universe_player::SelectGame();
+        if (arguments.gamePath.empty()) { ExitProcess(0); }
+    }
     for (int index = 1; index < count; ++index) {
         const std::wstring argument = values[index];
         if (argument == L"--pid" && index + 1 < count) {
@@ -93,6 +50,8 @@ Arguments ParseArguments(int count, wchar_t* values[]) {
             arguments.gamePath = std::filesystem::absolute(values[++index]);
         } else if (argument == L"--projection-trace") {
             arguments.projectionTrace = true;
+        } else if (argument == L"--check") {
+            arguments.checkOnly = true;
         } else if (argument == L"--prepare-stdin") {
             arguments.prepareStdin = true;
         } else {
@@ -111,7 +70,9 @@ Arguments ParseArguments(int count, wchar_t* values[]) {
     if ((arguments.processId == 0) == arguments.gamePath.empty()
         || (arguments.projectionTrace && arguments.processId == 0)
         || (arguments.prepareStdin && arguments.gamePath.empty())
+        || (arguments.checkOnly && arguments.gamePath.empty())
         || !std::filesystem::is_regular_file(arguments.libraryPath)) {
+        if (playerMode) { Fail(L"Keep WorkshopDeploymentPreview.dll beside this launcher and select H5_Game.exe."); }
         std::wcerr << L"Specify exactly one game executable or PID, and an existing plugin DLL. Trace requires a PID.\n";
         ExitProcess(2);
     }
@@ -152,7 +113,7 @@ void InjectLibrary(const Arguments& arguments) {
     if (!QueryFullProcessImageNameW(process, 0, executable.data(), &executableLength)) {
         Fail(L"Cannot identify target executable");
     }
-    VerifyGame(std::filesystem::path(executable.data()));
+    universe_player::VerifyGame(std::filesystem::path(executable.data()));
     if (arguments.projectionTrace) {
         const HMODULE localPlugin = LoadLibraryExW(absolutePath.c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);
         const FARPROC localTrace = localPlugin == nullptr ? nullptr : GetProcAddress(localPlugin, "WorkshopDeploymentPreviewProjectionTrace");
@@ -273,11 +234,16 @@ void InjectLibrary(const Arguments& arguments) {
 
 }
 
-int wmain(int count, wchar_t* values[]) {
+int Run(int count, wchar_t* values[]) {
     auto arguments = ParseArguments(count, values);
     PROCESS_INFORMATION child{};
     if (!arguments.gamePath.empty()) {
-        VerifyGame(arguments.gamePath);
+        universe_player::VerifyGame(arguments.gamePath);
+        if (arguments.checkOnly) {
+            std::wcout << L"Supported game and plugin file found; no game started.\n";
+            return 0;
+        }
+        universe_player::RequireGameClosed();
         STARTUPINFOW startup{.cb = sizeof(startup)};
         std::wstring command = L"\"" + arguments.gamePath.wstring() + L"\"";
         if (!CreateProcessW(arguments.gamePath.c_str(), command.data(), nullptr, nullptr, FALSE,
@@ -388,5 +354,21 @@ int wmain(int count, wchar_t* values[]) {
         startedProcess = nullptr;
         CloseHandle(child.hThread);
         CloseHandle(child.hProcess);
+    }
+    return 0;
+}
+
+int wmain(int count, wchar_t* values[]) {
+    playerMode = count == 1;
+    if (playerMode) { FreeConsole(); }
+    try { return Run(count, values); }
+    catch (const std::exception& error) {
+        if (startedProcess != nullptr) {
+            TerminateProcess(startedProcess, 1);
+            WaitForSingleObject(startedProcess, 5000);
+        }
+        if (playerMode) { MessageBoxA(nullptr, error.what(), "Deployment predictor", MB_OK | MB_ICONERROR); }
+        else { std::cerr << error.what() << '\n'; }
+        return 1;
     }
 }
