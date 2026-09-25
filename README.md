@@ -2,100 +2,65 @@
 
 ## RU
 
-Нативный прототип прогноза расстановки для Heroes V: Повелители Орды с **[Universe / Heroes V Lobby](https://h5lobby.com/)**. [Сообщество Universe](https://vk.com/h5universe) · [страница разработки Universe](https://boosty.to/verydobro).
+Предиктор расстановки для [Heroes V Universe](https://h5lobby.com/). До Start показывает проекции известных типов противника, карточки грейдов и область хода. Скрытые количества и грейды не раскрывает; фактическое разделение армии может отличаться. [Возможности, изображения и ограничения](https://xaaalera.github.io/heroes5-knowledge/players/deployment-preview/).
 
-До Start показывает проекции известных типов противника, справочные карточки и область хода выбранного грейда. Первый ПКМ открывает базовый/известный грейд, следующие переключают неопределённые варианты; двойной ЛКМ открывает подробное окно. Фигуры непрозрачные со слабым тёплым свечением. После Start проекции очищаются.
+### Игроку: установка и удаление
 
-Это не точная разведка скрытой армии: разделение, грейды и специальные построения могут отличаться. Один публичный тип предполагается одним отрядом. [Поведение и ограничения в вики](https://xaaalera.github.io/heroes5-knowledge/players/deployment-preview/) · [механика игры](https://xaaalera.github.io/heroes5-knowledge/players/army-placement/).
+Поставка — DLL для обычного запуска через **Heroes/Lobby**, без отдельного EXE нашего мода. [Releases](https://github.com/Xaaalera/heroes5-deployment-preview/releases) содержит выпуски; Code → Download ZIP скачивает исходники. Старый EXE-кандидат отменён. Версия 0.1.0-preview.2 экспериментальная.
 
-### Для игрока: готовый пакет
+1. Закрой игру. Файлы пакета: bin/dinput8.dll и bin/Heroes5Mods/WorkshopDeploymentPreview.dll в папке установленной игры.
+2. Общий dinput8.dll нужен один раз для обоих наших модов. Не перезаписывай файл другого мода с этим именем: совместимость не проверена. Штатные d3d9.dll, uni.dll, um.dll не заменяются.
+3. Запускай Heroes/Lobby как раньше. В обычном бою до Start должны появиться проекции. Python, Git и компилятор игроку не нужны.
 
-Пакет готовится к предварительному выпуску в [Releases](https://github.com/Xaaalera/heroes5-deployment-preview/releases). Архив исходников Code → Download ZIP для установки не подходит.
+Первый ПКМ открывает карточку базового или известного грейда; повторный переключает неопределённые варианты и дальность. Двойной ЛКМ открывает подробное окно. После Start проекции исчезают.
 
-1. Закрой игру. Распакуй папку `Heroes5DeploymentPreview` рядом с игровой папкой `bin`.
-2. Открой `workshop_preview_loader.exe` двойным щелчком. Если игра не найдена рядом, выбери её `bin/H5_Game.exe` в появившемся окне.
-3. Начни бой: до Start должны появиться проекции. Управление описано выше и [в вики](https://xaaalera.github.io/heroes5-knowledge/players/deployment-preview/).
-4. Для игры без мода запускай обычный игровой EXE. Для удаления закрой игру и удали папку `Heroes5DeploymentPreview`.
+Для отключения закрой игру и убери bin/Heroes5Mods/WorkshopDeploymentPreview.dll. Общий bin/dinput8.dll удаляй после всех наших DLL-модов и только если он установлен из нашего пакета. В UserMODs предиктор ничего не ставит.
 
-Два файла мода должны лежать рядом; игровые DLL не заменяются. Python, Git и средства сборки игроку не нужны. Неподдерживаемая версия игры отклоняется до запуска. Новый запуск двойным щелчком ещё не прошёл живую приёмку; пакет не объявлен стабильным.
+### Совместимость и проверка
 
-### Совместимость
+Поддерживается [закреплённая сборка](https://xaaalera.github.io/heroes5-knowledge/reference/universe-build/), определённая четырьмя SHA-256. Несовпадение или отказ модуля прекращает запуск с сообщением. Хеши игры не удостоверяют происхождение сторонних DLL.
 
-Рабочий код — C++ DLL, Python не нужен для установленной пары EXE/DLL. Загрузчик сверяет SHA-256 `H5_Game.exe`, `uni.dll`, `um.dll`, `d3d9.dll`; [проверенная связка](https://xaaalera.github.io/heroes5-knowledge/reference/universe-build/). Надписи Universe 2.0 недостаточно. При несовпадении не отключай проверку и не заменяй игровые DLL.
+SDK закреплён на [71509e4](https://github.com/Xaaalera/heroes5-mod-devkit/tree/71509e43af0faf080d8a47ed5b3ff8c72da2a3e9). Проверены обычный H5_Game.exe до меню и автоматическая загрузка DLL; затем пять циклов загрузки боя, карточек и очистки через обычный процесс игры с тестовыми командами и наблюдателем. Второй мод был загружен одновременно. Это ограниченная проверка совместной работы, не гарантия всех арен и хранилищ. В текущем прогоне смешанного пака совпала 1 из 7 позиций; один прогнозируемый отряд разделился на два. Точный прогноз всех клеток не обещается. Сам интерфейс Heroes/Lobby отдельно не автоматизировался.
 
-Инструменты и тесты: [Heroes V Mod Devkit](https://github.com/Xaaalera/heroes5-mod-devkit), проверенная ревизия [587e09c](https://github.com/Xaaalera/heroes5-mod-devkit/tree/587e09cc75014ca2cf443c486b46ad9bb9dc4b0e); она закреплена submodule `devkit/`. Это версия среды разработки, не номер релиза Universe.
+### Разработчику
 
-### Собрать из исходников
+Нужны Windows, Git, Visual Studio 2022 C++ x86 tools, CMake 3.21+. Для тестов также Python 3.10+ и requirements-dev.txt.
 
-Нужны Windows, Visual Studio 2022 C++ Build Tools с x86 toolchain и CMake 3.21+. Открой **x86 Native Tools Command Prompt**, затем:
+    git clone --recursive https://github.com/Xaaalera/heroes5-deployment-preview.git
+    cd heroes5-deployment-preview
+    cmake -S . -B .local/player-build -A Win32
+    cmake --build .local/player-build --config Release
+    cmake --install .local/player-build --config Release --prefix .local/dist
+    cmake -S devkit/native -B .local/bootstrap -A Win32
+    cmake --build .local/bootstrap --config Release
+    cmake --install .local/bootstrap --config Release --prefix .local/dist
+    python -m venv .venv
+    .venv/Scripts/python -m pip install -r requirements-dev.txt
+    $env:H5_PREVIEW_BUILD = (Resolve-Path .local/player-build/Release).Path
+    .venv/Scripts/python scripts/check.py
 
-```bat
-git clone --recursive https://github.com/Xaaalera/heroes5-deployment-preview.git
-cd heroes5-deployment-preview
-cmake -G "NMake Makefiles" -S . -B .local/build/deployment-preview-native -DCMAKE_BUILD_TYPE=Release
-cmake --build .local/build/deployment-preview-native --config Release
-cmake --install .local/build/deployment-preview-native --config Release --prefix .local/dist/deployment-preview-native
-```
+Install по умолчанию содержит только DLL. EXE workshop_preview_loader остаётся диагностикой и устанавливается лишь явным --component Diagnostics; игроку его не поставлять. Девять проверок C++/x86 допускают только явный пропуск game-EXE oracle при отсутствии игры. H5_WORKSPACE указывает подготовленный стенд для полного сравнения.
 
-Получатся `WorkshopDeploymentPreview.dll` и `workshop_preview_loader.exe` в `.local/dist/deployment-preview-native/`. Репозиторий хранит исходники, не дистрибутив игры. В CI собирается та же пара; статус успешной сборки не означает новый игровой тест.
-
-### Установить, запустить и удалить
-
-1. Закрой игру. Скопируй **оба своих собранных файла** в отдельную папку мода, сохранив их рядом. Не помещай DLL в UserMODs и не заменяй `d3d9.dll`, `uni.dll`, `um.dll`.
-2. Запусти загрузчик с путём к поддерживаемому EXE. Пример из корня клона, если игра лежит в соседнем `HeroesV-Universe`:
-
-```powershell
-.local/dist/deployment-preview-native/workshop_preview_loader.exe --game "../HeroesV-Universe/bin/H5_Game.exe"
-```
-
-3. Замени путь своей установленной игрой либо её тестовой копией. В обычном нападении на нейтрала проверь проекции **до** Start, карточку и её переключение. Сам запуск процесса не подтверждает результат.
-4. Для отключения закрой игру и запусти обычный `H5_Game.exe` напрямую. Для удаления после выхода достаточно убрать два файла мода из их отдельной папки; игровые EXE/DLL загрузчик на диске не меняет.
-
-Не запускай одновременно второй экземпляр игры ради теста. Режим `--pid` — диагностическое подключение к уже работающему процессу, а не рекомендуемый способ установки. Совместная работа со справочником хранилищ отдельно не проверена.
-
-### Проверить исходники
-
-В Python 3.10+ x64 окружении:
-
-```powershell
-python -m venv .venv
-.venv/Scripts/python -m pip install -r requirements-dev.txt
-.venv/Scripts/python -X utf8 scripts/check.py
-```
-
-Сначала собери Release по командам выше. Скрипт запускает 9 проверок C++/x86, печатает JSON с результатами и пропусками. Без собственной игры разрешён только явно отмеченный пропуск сравнения с исходным EXE; отсутствие сборки, компилятора или зависимостей не даёт успешной приёмки. Для полного сравнения задай `H5_WORKSPACE` с подготовленной `.local/test-game` поддерживаемой сборки.
-
-При переносе логика C++ сохранена; нормализованы только окончания строк и пустые строки в конце файлов, новая пара пересобрана; все 9 проверок прошли с локальным EXE-оракулом. Это эмуляция и сборка, не свежий живой бой после переноса. Исторические игровые результаты — [в дневнике](https://xaaalera.github.io/heroes5-knowledge/reference/research-diary/).
-
-Живой сценарий для разработчика: подготовить полигон по [devkit](https://github.com/Xaaalera/heroes5-mod-devkit/blob/587e09cc75014ca2cf443c486b46ad9bb9dc4b0e/README.md), установить пару в `H5_WORKSPACE/.local/dist/deployment-preview-native`, затем `python scripts/native-preview-check.py`. Он запускает/завершает игру и требует подходящего рабочего окружения; не выполнять его вместо unit-тестов. Основной тест использует адресные сообщения; физическая мышь — отдельный контроль. `H5_PREVIEW_BUILD` позволяет указать иной каталог собранной DLL для проверок; иначе используется `.local/build/deployment-preview-native` этого клона.
+Для живой проверки установи DLL в sandbox и используй scripts/native-preview-check.py --auto-load. Python и диагностический EXE в этом тесте читают состояние и управляют сценарием; они не являются пользовательским способом запуска. Не сочетай старую инъекцию --native-loader с установленным dinput8.dll: разные пути могут загрузить две копии плагина. SDK --control --observe-deployment записывает результат Start отдельно от входов прогноза.
 
 ## EN
 
-### Player package
+Deployment predictor for the linked Universe build. Before Start it shows public creature-type projections, upgrade cards and movement range; it does not reveal hidden quantities/upgrades or guarantee the game's stack splitting. See the linked wiki for images, controls and limits.
 
-A preview package is being prepared under [Releases](https://github.com/Xaaalera/heroes5-deployment-preview/releases). Code → Download ZIP is source code, not the player package.
+### Player installation
 
-Exit the game, extract `Heroes5DeploymentPreview` beside the game's `bin` folder, then double-click `workshop_preview_loader.exe`. If the adjacent game is not found, select its `bin/H5_Game.exe` in the file picker. Start a battle and check projections before Start. Keep the EXE and DLL together. No Python, Git or build tools are needed.
+Use the DLL package from Releases, not the source ZIP or withdrawn EXE candidate. Version 0.1.0-preview.2 is experimental. Exit the game; place bin/dinput8.dll and bin/Heroes5Mods/WorkshopDeploymentPreview.dll under the installed game directory. Both mods share one bootstrap. Never overwrite another mod's dinput8.dll without compatibility checks; original d3d9.dll, uni.dll and um.dll stay unchanged.
 
-Launch the ordinary game EXE to play without the mod. After exiting, delete the mod folder to remove it. Original game DLLs are not replaced. Unsupported game versions are rejected before launch. The new double-click path has not yet passed live acceptance; this is not a stable release.
+Start through Heroes/Lobby as usual. No separate mod EXE, Python, Git or compiler is required. First RMB opens the base/known grade card; repeated RMB cycles uncertain grades and range; double LMB opens details. Start clears projections.
 
+To disable, exit and remove the plugin DLL. Remove our shared dinput8.dll only after all our DLL mods are removed. The predictor installs no UserMODs file.
 
-Native deployment-preview prototype for Heroes V: Tribes of the East with the linked Universe project. Before Start it displays projections for public creature types, reference cards, upgrade-dependent movement, double-click details and subtle warm opaque figures; Start cleans them up. It does not reveal hidden quantities/upgrades or guarantee final placement. See the wiki for behavior and limitations.
+### Compatibility and development
 
-### Build and install
+Four pinned game hashes define compatibility. A mismatch or module initialization failure reports an error and cancels startup. Game hashes do not authenticate arbitrary plugin DLLs. The shared SDK revision above is pinned.
 
-Use Windows, Visual Studio 2022 C++ x86 tools and CMake 3.21+. Run the shared clone/configure/build/install commands from an x86 Native Tools prompt. They produce the DLL and loader side by side in `.local/dist/deployment-preview-native`. The pinned devkit submodule revision above identifies the tested development environment, not a Universe version.
+Normal H5_Game.exe startup reached the menu with automatic DLL loading; five instrumented battle/card/cleanup cycles then passed through the ordinary game process with both DLL mods present. This is bounded combined-use evidence, not all-arena/all-bank certification. The current mixed-pack run matched 1 of 7 positions, and one predicted stack split into two. Exact placement is not guaranteed. The Heroes/Lobby interface itself was not separately automated.
 
-Close the game, put the two built files in a separate mod directory and keep them together. Run the shared `--game` command with your supported EXE path. Do not put the DLL in UserMODs or replace Universe DLLs. The loader validates all four pinned binary hashes; a version label alone is insufficient. Do not bypass mismatch rejection.
+Developer prerequisites and commands are shared above. Default install contains DLLs only; the old EXE remains a diagnostic target and requires explicit --component Diagnostics installation. Nine C++/x86 tests allow only the documented absent-game oracle skip. H5_WORKSPACE selects the prepared sandbox for that oracle.
 
-Check projections/card behavior in a normal neutral battle before Start. To disable, exit and run the ordinary game EXE directly. To uninstall, exit and remove the two mod files; game binaries are not patched on disk. Python is not required by the installed pair. Diagnostic --pid attachment and combined use with bank reference are not claimed as the normal tested installation path.
-
-### Verification
-
-Use the shared venv/pip/check commands after the Release build. Nine C++/x86 checks print JSON and explicit skips. Only the optional pinned-game movement oracle may be unavailable; missing build/compiler/dependencies cannot yield an accepted run. H5_WORKSPACE may identify a prepared sandbox, and H5_PREVIEW_BUILD may select a different compiled-artifact directory.
-
-C++ logic was preserved; only line endings and trailing blank lines were normalized. The pair was rebuilt, and all nine checks passed with the local game oracle. No fresh live battle followed extraction. Historical observations stay in the diary. Developer live acceptance uses the devkit polygon and installed pair under H5_WORKSPACE, then scripts/native-preview-check.py; it launches/closes the game and is not a unit test. Physical input remains a separate check.
-
-### Проверка загрузчика / Launcher check
-
-`workshop_preview_loader.exe --check --game <H5_Game.exe>` проверяет четыре бинарника и наличие DLL без запуска игры. Это не подтверждает установку hook или видимость проекций. / Checks the four binaries and DLL presence without starting the game; does not establish hook installation or projection visibility.
+Use native-preview-check.py --auto-load after installing sandbox DLLs. Test-time Python/diagnostic inspection is not player runtime. Do not combine legacy --native-loader injection with automatic DLL loading. SDK --control --observe-deployment records actual Start positions separately from prediction inputs.

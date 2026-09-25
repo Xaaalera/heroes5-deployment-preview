@@ -147,25 +147,42 @@ def complete_battle(process_id, projection, observe=True):
 def main():
     global LOADER, PLUGIN
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--late-install", action="store_true", help="Check diagnostic attach and conflicting-hook refusal instead of packaged startup.")
+    startup = parser.add_mutually_exclusive_group()
+    startup.add_argument('--late-install', dest='startup_mode', action='store_const', const='late',
+                         help='Check diagnostic attach in a sandbox without DLL autoloading.')
+    startup.add_argument('--auto-load', dest='startup_mode', action='store_const', const='auto',
+                         help='Default: normal game startup with DLL mods installed in sandbox bin.')
+    startup.add_argument('--legacy-loader', dest='startup_mode', action='store_const', const='legacy',
+                         help='Developer-only historical EXE startup, without DLL autoloading.')
+    parser.set_defaults(startup_mode='auto')
     parser.add_argument('--system-input', action='store_true',
                         help='Opt in to foreground/shared-cursor input. Requires an exclusive mouse test interval.')
     parser.add_argument('--offscreen', action='store_true',
                         help='Explicit isolated automation only; never use for a visible user demo.')
     options = parser.parse_args()
+    options.auto_load = options.startup_mode == 'auto'
+    options.late_install = options.startup_mode == 'late'
     mouse_options = ['-SystemInput'] if options.system_input else []
     if options.late_install:
         LOADER = BUILD / 'workshop_preview_loader.exe'
         PLUGIN = BUILD / 'WorkshopDeploymentPreview.dll'
+    if options.auto_load:
+        LOADER = BUILD / 'workshop_preview_loader.exe'
+        PLUGIN = ROOT / '.local/test-game/bin/Heroes5Mods/WorkshopDeploymentPreview.dll'
+        if not (ROOT / '.local/test-game/bin/dinput8.dll').is_file():
+            raise RuntimeError('Install the DLL bootstrap in the sandbox before --auto-load.')
+    elif (ROOT / '.local/test-game/bin/dinput8.dll').exists():
+        raise RuntimeError('Legacy diagnostic modes require a sandbox without DLL autoloading.')
     if not LOADER.is_file() or not PLUGIN.is_file():
         raise RuntimeError('Build the native plugin before running this check')
     user_interface = ctypes.WinDLL('user32', use_last_error=True)
     user_interface.GetForegroundWindow.restype = wintypes.HWND
     previous_foreground = user_interface.GetForegroundWindow() or 0
     launch = json.loads(command(PYTHON, '-X', 'utf8', str(PROBE), 'launch', '--map', 'WorkshopPolygon', '--control',
-                                *([] if options.late_install else ['--native-loader'])))
+                                *(['--observe-deployment'] if options.auto_load else
+                                  [] if options.late_install else ['--native-loader'])))
     process_id = launch['pid']
-    result = {'pid': process_id, 'native_loader': launch['native_loader'], 'battles': [],
+    result = {'pid': process_id, 'native_loader': launch['native_loader'], 'auto_load': options.auto_load, 'battles': [],
               'input_transport': 'system_mouse' if options.system_input else 'postmessage'}
     try:
         if options.offscreen and not options.system_input:

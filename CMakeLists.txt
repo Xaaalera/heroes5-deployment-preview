@@ -19,5 +19,6 @@ target_include_directories(workshop_preview_loader PRIVATE devkit/native)
 target_link_libraries(workshop_preview_loader PRIVATE bcrypt comdlg32 user32)
 target_compile_definitions(workshop_preview_loader PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-install(TARGETS workshop_deployment_preview workshop_preview_loader
-        RUNTIME DESTINATION . LIBRARY DESTINATION .)
+install(TARGETS workshop_deployment_preview RUNTIME DESTINATION bin/Heroes5Mods)
+install(TARGETS workshop_preview_loader RUNTIME DESTINATION tools
+        COMPONENT Diagnostics EXCLUDE_FROM_ALL)
