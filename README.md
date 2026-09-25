@@ -6,7 +6,7 @@
 
 ### Игроку: установка и удаление
 
-Поставка — DLL для обычного запуска через **Heroes/Lobby**, без отдельного EXE нашего мода. [Releases](https://github.com/Xaaalera/heroes5-deployment-preview/releases) содержит выпуски; Code → Download ZIP скачивает исходники. Старый EXE-кандидат отменён. Версия 0.1.0-preview.2 экспериментальная.
+Поставка — DLL для обычного запуска через **Heroes/Lobby**, без отдельного EXE нашего мода. Наличие опубликованного архива проверяй в [Releases](https://github.com/Xaaalera/heroes5-deployment-preview/releases): если список пуст, пользовательский пакет ещё не опубликован. Code → Download ZIP скачивает исходники. Старый EXE-кандидат отменён. Версия 0.1.0-preview.2 экспериментальная.
 
 1. Закрой игру. Файлы пакета: bin/dinput8.dll и bin/Heroes5Mods/WorkshopDeploymentPreview.dll в папке установленной игры.
 2. Общий dinput8.dll нужен один раз для обоих наших модов. Не перезаписывай файл другого мода с этим именем: совместимость не проверена. Штатные d3d9.dll, uni.dll, um.dll не заменяются.
@@ -49,7 +49,7 @@ Deployment predictor for the linked Universe build. Before Start it shows public
 
 ### Player installation
 
-Use the DLL package from Releases, not the source ZIP or withdrawn EXE candidate. Version 0.1.0-preview.2 is experimental. Exit the game; place bin/dinput8.dll and bin/Heroes5Mods/WorkshopDeploymentPreview.dll under the installed game directory. Both mods share one bootstrap. Never overwrite another mod's dinput8.dll without compatibility checks; original d3d9.dll, uni.dll and um.dll stay unchanged.
+Check Releases for a published DLL archive. If none is listed, no player package is available yet. Do not use the source ZIP or withdrawn EXE candidate. Version 0.1.0-preview.2 is experimental. Exit the game; place bin/dinput8.dll and bin/Heroes5Mods/WorkshopDeploymentPreview.dll under the installed game directory. Both mods share one bootstrap. Never overwrite another mod's dinput8.dll without compatibility checks; original d3d9.dll, uni.dll and um.dll stay unchanged.
 
 Start through Heroes/Lobby as usual. No separate mod EXE, Python, Git or compiler is required. First RMB opens the base/known grade card; repeated RMB cycles uncertain grades and range; double LMB opens details. Start clears projections.
 
