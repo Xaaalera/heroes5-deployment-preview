@@ -1,0 +1,93 @@
+{
+  "diffHash": "965f7f6a1972278db6432e5635fe2f2a1a3c592c9e5ba29febdc29d4a2d8b29d",
+  "commitSha": "ceb0dd442ded809081c01ee1d95cf4f6ce687510",
+  "perAgent": {
+    "craft": {
+      "verdict": "PASS",
+      "score": 10
+    },
+    "docs": {
+      "score": 10,
+      "verdict": "PASS",
+      "findings": [],
+      "claims": [
+        {
+          "path": "AGENTS.md",
+          "disposition": "judged"
+        },
+        {
+          "path": "README.md",
+          "disposition": "judged"
+        }
+      ],
+      "summary": {
+        "agent": "docs",
+        "verdict": "PASS",
+        "score": 10,
+        "counts": {
+          "blocker": 0,
+          "major": 0,
+          "minor": 0,
+          "advisory": 0
+        },
+        "one_line": "The predictor DLL-only delivery guide matches code and bounded live evidence without claiming a released package."
+      },
+      "review": {
+        "reviewer": "/root/review_craft",
+        "files": [
+          "AGENTS.md",
+          "README.md"
+        ],
+        "criteria": {
+          "purpose": {
+            "verdict": "PASS",
+            "evidence": "Read AGENTS.md and README.md, the two changed Markdown files, against CMake, the plugin install export and the diagnostic script. The owner-directed delivery is now DLL-only through ordinary Heroes/Lobby startup; separate player EXEs are withdrawn and kept only as developer diagnostics. README describes the predictor's features, install/removal, compatibility, bounded live checks and developer build without implying exact placement."
+          },
+          "structure": {
+            "verdict": "PASS",
+            "evidence": "README leads with player DLL installation in RU and EN, then compatibility/live results and developer-only build/check steps. AGENTS repeats the ordinary-launch rule and requires cross-repo/wiki/release-note synchronization. CMake default install emits WorkshopDeploymentPreview.dll under bin/Heroes5Mods; the old loader EXE is an explicit Diagnostics component excluded from default install. The source remains in one plugin rather than copied into the devkit bootstrap."
+          },
+          "specificity": {
+            "verdict": "PASS",
+            "evidence": "Player layout lists bin/dinput8.dll and bin/Heroes5Mods/WorkshopDeploymentPreview.dll and says keep one shared bootstrap for both mods, do not overwrite foreign dinput8 or replace stock d3d9/uni/um, use normal Heroes/Lobby launch, remove only the plugin DLL to disable and shared bootstrap only after all owned mods are removed. README pins devkit 71509e4 and four game SHA-256 compatibility checks. It reports one exact cell match of seven in a mixed pack and one predicted stack splitting into two, rather than claiming universal accuracy."
+          },
+          "reproducibility": {
+            "verdict": "PASS",
+            "evidence": "Parent reports 9 predictor checks and the five ordinary-process battle/card/cleanup cycles with both DLLs loaded. Public wiki evidence JSON records pack_8 3/3, pack_12 4/4, pack_15 1/7, pack_0 0/2 and pack_1 1/1, matching the README's limited accuracy statement. The predictor diagnostic script defaults to --auto-load and refuses legacy injection when bootstrap is installed. I did not rerun the game or physical RMB input. README says the preview.2 package is experimental and directs users to check Releases; an empty list means no player download yet."
+          },
+          "evidence": {
+            "verdict": "PASS",
+            "evidence": "The source diff changes CMake default install to DLL-only and leaves the old EXE behind Diagnostics/EXCLUDE_FROM_ALL; existing WorkshopDeploymentPreviewInstall export is available to the shared devkit bootstrap. AGENTS and README no longer present the double-click EXE as player delivery. Parent-supplied live status and public diary/JSON support lifecycle claims, while the README separates exact-position failures from startup success and says Heroes/Lobby UI itself was not automated."
+          },
+          "applicability": {
+            "verdict": "PASS",
+            "evidence": "The package is scoped to the four-hash pinned Universe build and warns that game hashes do not authenticate third-party plugin DLLs. A foreign dinput8.dll must not be overwritten blindly. Both-mod evidence is limited to five instrumented battles, not every arena/bank/function combination. A player needs neither Python nor build tools; developer diagnostics do. Release availability is conditional on the Releases page and old EXE drafts are not represented as installable player packages."
+          },
+          "translations": {
+            "verdict": "PASS",
+            "evidence": "RU and EN README/AGENTS agree on DLL-only ordinary launch, file paths, shared bootstrap, uninstall order, pinned SDK, no arbitrary accuracy, five bounded live cycles, old EXE diagnostics, and conditional release availability. The EN instructions refer to the shared RU command block for developer build; no material contradiction found."
+          },
+          "maintenance": {
+            "verdict": "PASS",
+            "evidence": "AGENTS requires synchronized README/wiki/devkit/release notes for delivery changes; the site wiki has been separately reviewed at HEAD 9266a80 before these source pushes. README pins devkit 71509e4 and distinguishes historical EXE checks from new DLL delivery. review:info lists exactly AGENTS.md and README.md for this diff, both covered here. No source file was edited by this reviewer."
+          }
+        },
+        "findings": []
+      }
+    },
+    "security": {
+      "verdict": "PASS",
+      "score": 10
+    },
+    "tests": {
+      "verdict": "PASS",
+      "score": 10
+    },
+    "architecture": {
+      "verdict": "PASS",
+      "score": 10
+    }
+  },
+  "overall": "PASS",
+  "timestamp": "2026-09-25T10:52:35.921Z"
+}
