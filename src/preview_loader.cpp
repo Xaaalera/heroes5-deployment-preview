@@ -20,6 +20,8 @@ struct Arguments {
     std::filesystem::path libraryPath;
     std::filesystem::path gamePath;
     bool projectionTrace{};
+    bool adminSourceTrace{};
+    bool adminInputTrace{};
     bool prepareStdin{};
     bool checkOnly{};
 };
@@ -50,6 +52,10 @@ Arguments ParseArguments(int count, wchar_t* values[]) {
             arguments.gamePath = std::filesystem::absolute(values[++index]);
         } else if (argument == L"--projection-trace") {
             arguments.projectionTrace = true;
+        } else if (argument == L"--admin-source-trace") {
+            arguments.adminSourceTrace = true;
+        } else if (argument == L"--admin-input-trace") {
+            arguments.adminInputTrace = true;
         } else if (argument == L"--check") {
             arguments.checkOnly = true;
         } else if (argument == L"--prepare-stdin") {
@@ -80,7 +86,13 @@ Arguments ParseArguments(int count, wchar_t* values[]) {
 }
 
 uintptr_t FindModuleBase(DWORD processId, const wchar_t* moduleName) {
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, processId);
+    HANDLE snapshot = INVALID_HANDLE_VALUE;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, processId);
+        if (snapshot != INVALID_HANDLE_VALUE) break;
+        if (GetLastError() != ERROR_BAD_LENGTH) Fail(L"Cannot enumerate target modules");
+        Sleep(25);
+    }
     if (snapshot == INVALID_HANDLE_VALUE) {
         Fail(L"Cannot enumerate target modules");
     }
@@ -114,6 +126,188 @@ void InjectLibrary(const Arguments& arguments) {
         Fail(L"Cannot identify target executable");
     }
     universe_player::VerifyGame(std::filesystem::path(executable.data()));
+    if (arguments.adminInputTrace) {
+        const HMODULE localPlugin = LoadLibraryExW(absolutePath.c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);
+        const FARPROC localTrace = localPlugin == nullptr ? nullptr
+            : GetProcAddress(localPlugin, "WorkshopDeploymentPreviewSuperadminInputTrace");
+        if (localTrace == nullptr) Fail(L"Cannot resolve superadmin input-trace export");
+        const uintptr_t remotePlugin = FindModuleBase(arguments.processId, arguments.libraryPath.filename().c_str());
+        const uintptr_t remoteTrace = remotePlugin + (reinterpret_cast<uintptr_t>(localTrace) - reinterpret_cast<uintptr_t>(localPlugin));
+        constexpr size_t rowWords = 36;
+        constexpr size_t metadata = 8 + 256 * rowWords;
+        constexpr size_t auxiliary = metadata + 39 + 3 + 64 * 6;
+        constexpr size_t strategy = auxiliary + 3 + 256 * 6;
+        constexpr size_t strengths = strategy + 10;
+        constexpr size_t area = strengths + 2 + 256 * 40 + 4 + 24;
+        std::array<uint32_t, area + 2 + 128 * 316 + 8> snapshot{};
+        void* remoteSnapshot = VirtualAllocEx(process, nullptr, sizeof(snapshot), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (remoteSnapshot == nullptr) Fail(L"Cannot allocate primitive input snapshot");
+        HANDLE thread = CreateRemoteThread(process, nullptr, 0,
+            reinterpret_cast<LPTHREAD_START_ROUTINE>(remoteTrace), remoteSnapshot, 0, nullptr);
+        if (thread == nullptr) Fail(L"Cannot execute primitive input trace");
+        if (WaitForSingleObject(thread, 10000) != WAIT_OBJECT_0) Fail(L"Primitive input trace timed out");
+        DWORD status{};
+        GetExitCodeThread(thread, &status);
+        CloseHandle(thread);
+        SIZE_T received{};
+        if (status != 1 || !ReadProcessMemory(process, remoteSnapshot, snapshot.data(), sizeof(snapshot), &received)
+            || received != sizeof(snapshot) || snapshot[0] != 15 || snapshot[3] > 256 || snapshot[7] != rowWords
+            || snapshot[strengths] > 256
+            || snapshot[area] > 128
+            || snapshot[metadata + 39] > 64 || snapshot[auxiliary] > 256) {
+            Fail(L"Incomplete primitive input snapshot");
+        }
+        VirtualFreeEx(process, remoteSnapshot, 0, MEM_RELEASE);
+        FreeLibrary(localPlugin);
+        CloseHandle(process);
+        std::wcout << L"{\"enabled\":" << (snapshot[1] ? L"true" : L"false")
+                   << L",\"attack_generation\":" << snapshot[2] << L",\"overflow\":" << snapshot[4]
+                   << L",\"frozen\":" << (snapshot[5] ? L"true" : L"false")
+                   << L",\"forecast_world\":" << snapshot[6] << L",\"row_words\":" << snapshot[7] << L",\"rows\":[";
+        for (uint32_t row = 0; row < snapshot[3]; ++row) {
+            if (row) std::wcout << L",";
+            std::wcout << L"[";
+            for (uint32_t word = 0; word < rowWords; ++word) {
+                if (word) std::wcout << L",";
+                std::wcout << snapshot[8 + row * rowWords + word];
+            }
+            std::wcout << L"]";
+        }
+        std::wcout << L"],\"core_supported_mask\":" << snapshot[metadata]
+                   << L",\"core_stack_counts\":[" << snapshot[metadata + 1] << L"," << snapshot[metadata + 2]
+                   << L"],\"core_aggregate_words\":[";
+        for (uint32_t side = 0; side < 2; ++side) {
+            if (side) std::wcout << L",";
+            std::wcout << L"[";
+            for (uint32_t word = 0; word < 18; ++word) {
+                if (word) std::wcout << L",";
+                std::wcout << snapshot[metadata + 3 + side * 18 + word];
+            }
+            std::wcout << L"]";
+        }
+        std::wcout << L"],\"hero_correction_mask\":" << snapshot[metadata + 41]
+                   << L",\"hero_correction_overflow\":" << snapshot[metadata + 40] << L",\"hero_corrections\":[";
+        for (uint32_t row = 0; row < snapshot[metadata + 39]; ++row) {
+            if (row) std::wcout << L",";
+            std::wcout << L"[";
+            for (uint32_t word = 0; word < 6; ++word) {
+                if (word) std::wcout << L",";
+                std::wcout << snapshot[metadata + 42 + row * 6 + word];
+            }
+            std::wcout << L"]";
+        }
+        std::wcout << L"],\"auxiliary_mask\":" << snapshot[auxiliary + 2]
+                   << L",\"auxiliary_overflow\":" << snapshot[auxiliary + 1] << L",\"auxiliary_inputs\":[";
+        for (uint32_t row = 0; row < snapshot[auxiliary]; ++row) {
+            if (row) std::wcout << L",";
+            std::wcout << L"[";
+            for (uint32_t word = 0; word < 6; ++word) {
+                if (word) std::wcout << L",";
+                std::wcout << snapshot[auxiliary + 3 + row * 6 + word];
+            }
+            std::wcout << L"]";
+        }
+        std::wcout << L"],\"strategy_words\":[";
+        for (uint32_t word = 0; word < 10; ++word) {
+            if (word) std::wcout << L",";
+            std::wcout << snapshot[strategy + word];
+        }
+        std::wcout << L"],\"source_strength_overflow\":" << snapshot[strengths + 1]
+                   << L",\"source_strength_row_words\":40,\"source_strength_inputs\":[";
+        for (uint32_t row = 0; row < snapshot[strengths]; ++row) {
+            if (row) std::wcout << L",";
+            std::wcout << L"[";
+            for (uint32_t word = 0; word < 40; ++word) {
+                if (word) std::wcout << L",";
+                std::wcout << snapshot[strengths + 2 + row * 40 + word];
+            }
+            std::wcout << L"]";
+        }
+        std::wcout << L"],\"source_split_seed_words\":[";
+        for (uint32_t word = 0; word < 4; ++word) {
+            if (word) std::wcout << L",";
+            std::wcout << snapshot[strengths + 2 + 256 * 40 + word];
+        }
+        std::wcout << L"],\"source_composition_words\":[";
+        for (uint32_t word = 0; word < 24; ++word) {
+            if (word) std::wcout << L",";
+            std::wcout << snapshot[strengths + 2 + 256 * 40 + 4 + word];
+        }
+        std::wcout << L"],\"area_input_overflow\":" << snapshot[area + 1]
+                   << L",\"area_input_row_words\":316,\"area_inputs\":[";
+        for (uint32_t row = 0; row < snapshot[area]; ++row) {
+            if (row) std::wcout << L",";
+            std::wcout << L"[";
+            for (uint32_t word = 0; word < 316; ++word) {
+                if (word) std::wcout << L",";
+                std::wcout << snapshot[area + 2 + row * 316 + word];
+            }
+            std::wcout << L"]";
+        }
+        std::wcout << L"],\"area_policy_words\":[";
+        for (uint32_t word = 0; word < 4; ++word) {
+            if (word) std::wcout << L",";
+            std::wcout << snapshot[area + 2 + 128 * 316 + word];
+        }
+        std::wcout << L"],\"large_policy_words\":[";
+        for (uint32_t word = 0; word < 4; ++word) {
+            if (word) std::wcout << L",";
+            std::wcout << snapshot[area + 2 + 128 * 316 + 4 + word];
+        }
+        std::wcout << L"]}\n";
+        return;
+    }
+    if (arguments.adminSourceTrace) {
+        const HMODULE localPlugin = LoadLibraryExW(absolutePath.c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);
+        const FARPROC localTrace = localPlugin == nullptr ? nullptr : GetProcAddress(localPlugin, "WorkshopDeploymentPreviewSuperadminSourceTrace");
+        if (localTrace == nullptr) Fail(L"Cannot resolve superadmin source-trace export");
+        const uintptr_t remotePlugin = FindModuleBase(arguments.processId, arguments.libraryPath.filename().c_str());
+        const uintptr_t remoteTrace = remotePlugin + (reinterpret_cast<uintptr_t>(localTrace) - reinterpret_cast<uintptr_t>(localPlugin));
+        void* remoteSnapshot = VirtualAllocEx(process, nullptr, 58 * sizeof(uint32_t), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (remoteSnapshot == nullptr) Fail(L"Cannot allocate admin source snapshot");
+        HANDLE thread = CreateRemoteThread(process, nullptr, 0,
+                                           reinterpret_cast<LPTHREAD_START_ROUTINE>(remoteTrace), remoteSnapshot, 0, nullptr);
+        if (thread == nullptr) Fail(L"Cannot execute admin source trace");
+        if (WaitForSingleObject(thread, 10000) != WAIT_OBJECT_0) Fail(L"Admin source trace timed out");
+        DWORD status{};
+        GetExitCodeThread(thread, &status);
+        CloseHandle(thread);
+        std::array<uint32_t, 58> snapshot{};
+        SIZE_T received{};
+        if (status != 1 || !ReadProcessMemory(process, remoteSnapshot, snapshot.data(), sizeof(snapshot), &received)
+            || received != sizeof(snapshot) || snapshot[0] != 7 || snapshot[3] > 7
+            || snapshot[56] > 2 || snapshot[57] > 1) {
+            Fail(L"Incomplete admin source snapshot");
+        }
+        VirtualFreeEx(process, remoteSnapshot, 0, MEM_RELEASE);
+        FreeLibrary(localPlugin);
+        CloseHandle(process);
+        std::wcout << L"{\"enabled\":" << (snapshot[1] ? L"true" : L"false")
+                   << L",\"source_kind\":" << snapshot[56]
+                   << L",\"source_modifiers_known\":" << (snapshot[57] ? L"true" : L"false")
+                   << L",\"generation\":" << snapshot[2] << L",\"source_stacks\":[";
+        for (uint32_t index = 0; index < snapshot[3]; ++index) {
+            if (index) std::wcout << L",";
+            std::wcout << L"{\"type\":" << snapshot[4 + index * 2]
+                       << L",\"quantity\":" << snapshot[5 + index * 2]
+                       << L",\"speed\":";
+            if (snapshot[57]) std::wcout << static_cast<int32_t>(snapshot[18 + index]);
+            else std::wcout << L"null";
+            std::wcout << L",\"flying\":" << (snapshot[57] ? (snapshot[25 + index] ? L"true" : L"false") : L"null") << L"}";
+        }
+        std::wcout << L"],\"aggregate_words\":[";
+        for (uint32_t index = 0; index < 18; ++index) {
+            if (index) std::wcout << L",";
+            std::wcout << snapshot[32 + index];
+        }
+        std::wcout << L"],\"terrain_known\":" << (snapshot[50] ? L"true" : L"false")
+                   << L",\"native_terrain_mask\":" << snapshot[51]
+                   << L",\"terrain_type\":" << snapshot[52]
+                   << L",\"preview_rng_known\":" << (snapshot[53] ? L"true" : L"false")
+                   << L",\"preview_rng_state\":" << snapshot[54]
+                   << L",\"forecast_world\":" << snapshot[55] << L"}\n";
+        return;
+    }
     if (arguments.projectionTrace) {
         const HMODULE localPlugin = LoadLibraryExW(absolutePath.c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);
         const FARPROC localTrace = localPlugin == nullptr ? nullptr : GetProcAddress(localPlugin, "WorkshopDeploymentPreviewProjectionTrace");
@@ -122,7 +316,7 @@ void InjectLibrary(const Arguments& arguments) {
         }
         const uintptr_t remotePlugin = FindModuleBase(arguments.processId, arguments.libraryPath.filename().c_str());
         const uintptr_t remoteTrace = remotePlugin + (reinterpret_cast<uintptr_t>(localTrace) - reinterpret_cast<uintptr_t>(localPlugin));
-        void* remoteSnapshot = VirtualAllocEx(process, nullptr, 136, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        void* remoteSnapshot = VirtualAllocEx(process, nullptr, 216, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         if (remoteSnapshot == nullptr) {
             Fail(L"Cannot allocate projection snapshot");
         }
@@ -138,17 +332,24 @@ void InjectLibrary(const Arguments& arguments) {
         DWORD trace{};
         GetExitCodeThread(traceThread, &trace);
         CloseHandle(traceThread);
-        std::array<uint32_t, 34> snapshot{};
+        std::array<uint32_t, 54> snapshot{};
         SIZE_T received{};
         const bool captured = trace == 1 && ReadProcessMemory(process, remoteSnapshot, snapshot.data(),
             sizeof(snapshot), &received) && received == sizeof(snapshot);
         VirtualFreeEx(process, remoteSnapshot, 0, MEM_RELEASE);
         FreeLibrary(localPlugin);
-        if (!captured || snapshot[0] != 1 || snapshot[1] > 7 || snapshot[2] > 7) {
+        if (!captured) Fail(L"Projection snapshot is busy; retry capture");
+        if (snapshot[0] != 8 || snapshot[1] > 7 || snapshot[2] > 7
+            || (snapshot[53] >> snapshot[1]) != 0
+            || snapshot[41] > 1 || snapshot[42] > 1 || snapshot[45] > 1) {
             Fail(L"Projection snapshot changed during capture or has an unsupported ABI");
         }
         CloseHandle(process);
-        std::wcout << L"{\"abi\":1,\"public\":" << snapshot[1] << L",\"models\":" << snapshot[2]
+        uint32_t excluded = 0;
+        for (uint32_t index = 0; index < snapshot[1]; ++index) excluded += (snapshot[53] >> index) & 1;
+        std::wcout << L"{\"abi\":8,\"public\":" << snapshot[1] << L",\"models\":" << snapshot[2]
+                   << L",\"planned_models\":" << snapshot[1] - excluded
+                   << L",\"excluded_source_mask\":" << snapshot[53]
                    << L",\"generation\":" << snapshot[3] << L",\"grid\":[" << snapshot[4] << L"," << snapshot[5] << L"],\"slots\":[";
         for (uint32_t index = 0; index < snapshot[2]; ++index) {
             if (index != 0) {
@@ -156,9 +357,21 @@ void InjectLibrary(const Arguments& arguments) {
             }
             std::wcout << L"{\"type\":" << snapshot[6 + index * 4]
                        << L",\"cell\":[" << snapshot[7 + index * 4] << L"," << snapshot[8 + index * 4]
-                       << L"],\"size\":" << snapshot[9 + index * 4] << L"}";
+                       << L"],\"size\":" << snapshot[9 + index * 4]
+                       << L",\"quantity\":" << snapshot[46 + index] << L"}";
         }
-        std::wcout << L"]}\n";
+        std::wcout << L"],\"public_bands\":[";
+        for (uint32_t index = 0; index < snapshot[1]; ++index) {
+            if (index != 0) std::wcout << L",";
+            std::wcout << snapshot[34 + index];
+        }
+        std::wcout << L"],\"predicted_spread\":" << (snapshot[41] ? L"true" : L"false")
+                   << L",\"predicted_defensive\":" << (snapshot[42] ? L"true" : L"false")
+                   << L",\"estimated_spread_denominator\":" << snapshot[43]
+                   << L",\"known_hero_attack\":";
+        if (snapshot[44] == 0xffffffff) std::wcout << L"null";
+        else std::wcout << snapshot[44];
+        std::wcout << L",\"known_hero_battle_frenzy\":" << (snapshot[45] ? L"true" : L"false") << L"}\n";
         return;
     }
     const HMODULE localKernel = GetModuleHandleW(L"kernel32.dll");

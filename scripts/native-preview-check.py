@@ -15,7 +15,10 @@ import time
 
 
 MOD_ROOT = Path(__file__).resolve().parents[1]
-DEVKIT = MOD_ROOT / 'devkit'
+DEVKIT = Path(os.environ.get('H5_PREVIEW_DEVKIT') or MOD_ROOT / 'devkit').expanduser().resolve()
+if ((MOD_ROOT.parents[1] / 'scripts/sync-subrepos.ps1').is_file()
+        and DEVKIT != (MOD_ROOT.parents[1] / 'devkit').resolve()):
+    raise RuntimeError('Workshop requires the single canonical devkit; run scripts/sync-subrepos.ps1')
 if not (DEVKIT / 'scripts/native-probe.py').is_file():
     raise RuntimeError('Initialize devkit: git submodule update --init --recursive')
 ROOT = Path(os.environ.get('H5_WORKSPACE') or MOD_ROOT).expanduser().resolve()
@@ -29,6 +32,7 @@ PROBE = DEVKIT / 'scripts/native-probe.py'
 GAME_UI = DEVKIT / 'scripts/game-ui.ps1'
 DIAGNOSTIC = re.compile(
     r'public portraits=(\d+), model outputs=(\d+), hovered creature=(\d+), cursor cell=(\d+),(\d+), output alignment=(\d+)')
+_control_module = None
 
 
 def command(*arguments, allowed=(0,)):
@@ -39,8 +43,20 @@ def command(*arguments, allowed=(0,)):
 
 
 def control(*arguments):
-    output = command(PYTHON, '-X', 'utf8', str(CONTROL), *arguments)
-    return json.loads(output)
+    global _control_module
+    if _control_module is None:
+        if str(CONTROL.parent) not in sys.path:
+            sys.path.insert(0, str(CONTROL.parent))
+        specification = importlib.util.spec_from_file_location('native_preview_control', CONTROL)
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        _control_module = module
+    try:
+        return _control_module.main(list(arguments))
+    except RuntimeError:
+        raise
+    except Exception as error:
+        raise RuntimeError(str(error)) from error
 
 
 def capture(process_id, label):
@@ -54,6 +70,27 @@ def capture(process_id, label):
 
 
 def diagnostics(process_id):
+    # This loader EXE can install an absent DLL. A normal-start acceptance
+    # probe must wait for the bootstrap's renderer hook, never install it.
+    if str(PROBE.parent) not in sys.path:
+        sys.path.insert(0, str(PROBE.parent))
+    specification = importlib.util.spec_from_file_location('preview_readonly_probe', PROBE)
+    native_probe = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(native_probe)
+    kernel = native_probe.api()
+    process = native_probe.checked(kernel.OpenProcess(0x1010, False, process_id))
+    try:
+        renderer = native_probe.read(kernel, process, 0x577010, 6)
+    finally:
+        kernel.CloseHandle(process)
+    if renderer == bytes.fromhex('55 8b ec 83 e4 f8'):
+        return {'public': 0, 'models': 0, 'hovered': 0, 'cell': [31, 31],
+                'alignment': 8, 'loader_status': 'not_yet_auto_loaded'}
+    trace = json.loads(command(str(LOADER), '--pid', str(process_id), '--dll', str(PLUGIN),
+                               '--projection-trace'))
+    if trace['models'] == 0:
+        return {'public': trace['public'], 'models': 0, 'hovered': 0, 'cell': [31, 31],
+                'alignment': 8, 'loader_status': 'loaded_without_projection'}
     output = command(str(LOADER), '--pid', str(process_id), '--dll', str(PLUGIN), allowed=(1,))
     match = DIAGNOSTIC.search(output)
     if match is None:
@@ -62,20 +99,53 @@ def diagnostics(process_id):
     return {'public': public, 'models': models, 'hovered': hovered, 'cell': [x, y], 'alignment': alignment}
 
 
-def wait_for_models(process_id, public_count):
+def wait_for_models(process_id, public_count, allow_partial=False):
+    requested_public = public_count
     deadline = time.monotonic() + 10
     latest = None
     while time.monotonic() < deadline:
-        latest = diagnostics(process_id)
-        if latest['public'] == public_count and latest['models'] == public_count:
+        try:
+            latest = diagnostics(process_id)
+        except RuntimeError as error:
+            if not str(error).startswith('Projection snapshot is busy; retry capture'):
+                raise
+            time.sleep(0.05)
+            continue
+        if allow_partial and requested_public == 1 and latest['public'] != requested_public:
+            inputs = json.loads(command(str(LOADER), '--pid', str(process_id), '--dll', str(PLUGIN), '--admin-input-trace'))
+            composition = inputs.get('source_composition_words', [])
+            if (inputs.get('enabled') and inputs.get('frozen') and len(composition) == 24
+                    and composition[0] == 1 and 1 <= composition[12] <= 4
+                    and composition[12] == latest['public']):
+                public_count = composition[12]
+        if latest['public'] == public_count and (latest['models'] == public_count
+                or (allow_partial and 0 < latest['models'] < public_count)):
             trace = json.loads(command(str(LOADER), '--pid', str(process_id), '--dll', str(PLUGIN), '--projection-trace'))
-            if trace['public'] != public_count or trace['models'] != public_count or len(trace['slots']) != public_count:
+            if (trace['abi'] != 8 or trace['public'] != public_count or trace['models'] != latest['models']
+                    or not isinstance(trace.get('planned_models'), int) or not 1 <= trace['planned_models'] <= public_count
+                    or not isinstance(trace.get('excluded_source_mask'), int)
+                    or trace['excluded_source_mask'] < 0 or trace['excluded_source_mask'] >> public_count
+                    or trace['planned_models'] != public_count - trace['excluded_source_mask'].bit_count()
+                    or len(trace['slots']) != latest['models'] or len(trace.get('public_bands', [])) != public_count
+                    or any(band < 0 or band > 9 for band in trace['public_bands'])
+                    or not isinstance(trace.get('predicted_spread'), bool)
+                    or not isinstance(trace.get('predicted_defensive'), bool)
+                    or not isinstance(trace.get('estimated_spread_denominator'), int)
+                    or trace['estimated_spread_denominator'] < 0
+                    or not isinstance(trace.get('known_hero_attack'), int)
+                    or not 0 <= trace['known_hero_attack'] <= 1000
+                    or not isinstance(trace.get('known_hero_battle_frenzy'), bool)):
                 raise RuntimeError('Incomplete projection snapshot: ' + json.dumps(trace))
+            if trace['models'] != trace['planned_models'] and time.monotonic() < deadline - 0.5:
+                time.sleep(0.5)
+                continue
             occupied = set()
             width, height = trace['grid']
             for slot in trace['slots']:
                 x, y = slot['cell']
                 size = slot['size']
+                if not isinstance(slot.get('quantity'), int) or not 0 <= slot['quantity'] <= 100000000:
+                    raise RuntimeError('Invalid predicted quantity: ' + json.dumps(trace))
                 if size not in (1, 2) or not (size <= x < width - 1 and size <= y < height - 1):
                     raise RuntimeError('Invalid or out-of-bounds footprint: ' + json.dumps(trace))
                 cells = {(column, row) for column in range(x - size + 1, x + 1)
@@ -84,7 +154,16 @@ def wait_for_models(process_id, public_count):
                     raise RuntimeError('Projection cells overlap: ' + str(sorted(occupied & cells)))
                 occupied.update(cells)
             latest['footprints'] = trace['slots']
+            latest['public_bands'] = trace['public_bands']
+            latest['predicted_spread'] = trace['predicted_spread']
+            latest['predicted_defensive'] = trace['predicted_defensive']
+            latest['estimated_spread_denominator'] = trace['estimated_spread_denominator']
+            latest['known_hero_attack'] = trace['known_hero_attack']
+            latest['known_hero_battle_frenzy'] = trace['known_hero_battle_frenzy']
             latest['generation'] = trace['generation']
+            latest['prediction_complete'] = latest['models'] == trace['planned_models']
+            latest['planned_models'] = trace['planned_models']
+            latest['excluded_source_mask'] = trace['excluded_source_mask']
             return latest
         time.sleep(0.5)
     raise RuntimeError('Projection readiness timed out: ' + json.dumps(latest))
@@ -103,7 +182,19 @@ def find_projection(process_id, creature_type, candidates, mouse_options):
     raise RuntimeError(f'Could not hover public type {creature_type}: ' + json.dumps(hovered))
 
 
-def complete_battle(process_id, projection, observe=True):
+def wait_for_control_queues(timeout=15):
+    deadline = time.monotonic() + timeout
+    latest = None
+    while time.monotonic() < deadline:
+        latest = control('runtime-state')
+        if (latest.get('stable') and latest.get('event_commands_pending') is False
+                and latest['script_contexts']['adventure']['script_commands_pending'] is False):
+            return latest
+        time.sleep(0.2)
+    raise RuntimeError('Native control queues did not drain: ' + json.dumps(latest))
+
+
+def complete_battle(process_id, projection, observe=True, hero='Brem', creature_ids=None, on_observation=None):
     armed = control('deployment-observation', '--arm') if observe else None
     control('confirm')
     time.sleep(0.6)
@@ -119,16 +210,48 @@ def complete_battle(process_id, projection, observe=True):
     observed = control('deployment-observation') if observe else None
     if observe and (observed['sequence'] != armed['sequence'] or not observed['units']):
         raise RuntimeError('No complete after-start observation for this battle: ' + json.dumps(observed))
+    if observe and creature_ids is not None:
+        for unit in observed['units']:
+            if unit['creature'] not in creature_ids:
+                raise RuntimeError('Observed creature absent from pinned enum: ' + unit['creature'])
+            unit['type'] = creature_ids[unit['creature']]
+    if observe and on_observation is not None:
+        try:
+            observed['runtime_state_after_start'] = control('runtime-state')
+        except RuntimeError as error:
+            observed['runtime_state_capture_error'] = str(error)
+        on_observation(observed)
     control('finish', '--winner', '0')
     time.sleep(0.25)
     control('results')
-    time.sleep(0.35)
-    result = {'release': released, 'hero': control('hero', 'Brem')}
+    returned = wait_for_control_queues()
+    result = {'release': released, 'return_runtime_state': returned, 'hero': control('hero', hero)}
+    result['levelup_choices'] = []
+    if projection.get('hero_level_before_start') is not None:
+        for _ in range(40):
+            dialog = control('levelup-state')
+            if dialog.get('available') is not True or dialog.get('stable') is not True:
+                raise RuntimeError('Native level-up observer is unavailable or unstable: ' + json.dumps(dialog))
+            result['levelup_state_after_results'] = dialog
+            if not dialog['open']:
+                break
+            previous_level = result['hero']['level']
+            control('event', 'skill_1')
+            control('event', 'MB_Button_Ok')
+            result['return_runtime_state'] = wait_for_control_queues()
+            result['hero'] = control('hero', hero)
+            result['levelup_choices'].append({'from_level': previous_level, 'to_level': result['hero']['level'],
+                                              'choice': 1, 'dialog_native_state': dialog})
+        else:
+            raise RuntimeError('Level-up dialogs did not settle within40 choices')
     if observe:
         # Resolve public Lua constants only after returning to adventure mode.
         # Actual combat units never feed back into DLL prediction.
-        expression = "''.." + "..','..".join(unit['creature'] for unit in observed['units'])
-        types = [int(value) for value in control('eval', expression)['result'].split(',')]
+        if creature_ids is None:
+            expression = "''.." + "..','..".join(unit['creature'] for unit in observed['units'])
+            types = [int(value) for value in control('eval', expression)['result'].split(',')]
+        else:
+            types = [unit['type'] for unit in observed['units']]
         if len(types) != len(observed['units']):
             raise RuntimeError('Observed creature constants did not resolve completely')
         for unit, creature in zip(observed['units'], types):

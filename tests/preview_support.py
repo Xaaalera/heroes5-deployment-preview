@@ -4,7 +4,10 @@ import subprocess
 import sys
 
 MOD_ROOT = Path(__file__).resolve().parents[1]
-DEVKIT = MOD_ROOT / 'devkit'
+DEVKIT = (MOD_ROOT / 'devkit').resolve()
+if ((MOD_ROOT.parents[1] / 'scripts/sync-subrepos.ps1').is_file()
+        and DEVKIT != (MOD_ROOT.parents[1] / 'devkit').resolve()):
+    raise RuntimeError('Workshop requires the single canonical devkit; run scripts/sync-subrepos.ps1')
 if not (DEVKIT / 'scripts/workspace.py').is_file():
     raise RuntimeError('Initialize the pinned devkit: git submodule update --init --recursive')
 sys.path.insert(0, str(DEVKIT / 'scripts'))
