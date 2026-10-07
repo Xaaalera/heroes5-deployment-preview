@@ -70,6 +70,15 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(result['status'], 'terminated_hung_owned_sandbox')
         kernel.TerminateProcess.assert_called_once_with(77, 1)
         self.assertEqual(kernel.CloseHandle.call_count, 2)
+        kernel.TerminateProcess.reset_mock()
+        def foreign_path(handle, flags, destination, length):
+            destination.value = str(WORKSPACE / 'other-session/H5_Game.exe')
+            return True
+        kernel.QueryFullProcessImageNameW.side_effect = foreign_path
+        with self.assertRaisesRegex(RuntimeError, 'outside the owned test sandbox'):
+            namespace['stop_hung_owned_sandbox'](123, 999, WORKSPACE)
+        kernel.TerminateProcess.assert_not_called()
+        self.assertEqual(kernel.CloseHandle.call_count, 3)
 
     def test_custom_hero_army_requires_known_distinct_positive_bounded_counts(self):
         import ast
