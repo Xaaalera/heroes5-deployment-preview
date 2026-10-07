@@ -53,7 +53,7 @@ RU: личные проекты автора; не официальные про
 
 ### Разработчику
 
-Checkpoint4 октября2026: DLL baca89 реализует резервsource-simple fallback для source-simple с native army rectangle и сохранением частичных клеток.240 синтетических native mixed сравнений и selector counterexample проходят; полный58/58 PASS. Живой generated Archer40→20+20 контроль2/2 с штатным выходом не требовал fallback; forced live fallback/новая широкая матрица ещё нужны.273/273 относится к прежней a8d794.
+Checkpoint4 октября2026: DLL baca89 реализует резервное размещение простых исходных армий с native army rectangle и сохранением частичных клеток.240 синтетических native mixed сравнений и selector counterexample проходят; полный58/58 PASS. Живой generated Archer40→20+20 контроль2/2 с штатным выходом не требовал fallback; forced live fallback/новая широкая матрица ещё нужны.273/273 относится к прежней a8d794.
 
 Checkpoint4 октября2026: десять свежих загрузок текущей DLL a8d794 дали **273/273 exact** боёв(mixed213/213,solo60/60), все штатно закрыты. Независимый strict Superadmin verifier PASS по исходным прогнозам до Start/текущим хешам/полноте паков. Вердикт goal_completefalse: оставшиеся ветви, live equality и полный алгоритм ещё не закрыты. Legacy CLI exit1 — старый acceptance flag; не исправляй сохранённый JSON. Выпуска не было.
 
@@ -86,7 +86,7 @@ Checkpoint3 октября2026: исследовательская DLLfb8e74 д�
     $env:H5_PREVIEW_BUILD = (Resolve-Path .local/player-build/Release).Path
     .venv/Scripts/python scripts/check.py
 
-Install по умолчанию содержит только DLL. EXE workshop_preview_loader остаётся диагностикой и устанавливается лишь явным --component Diagnostics; игроку его не поставлять. Девять проверок C++/x86 допускают только явный пропуск game-EXE oracle при отсутствии игры. H5_WORKSPACE указывает подготовленный стенд для полного сравнения.
+Install по умолчанию содержит только DLL. EXE workshop_preview_loader остаётся диагностикой и устанавливается лишь явным --component Diagnostics; игроку его не поставлять. Локальные проверки C++/x86 допускают только явный пропуск game-EXE oracle при отсутствии игры. H5_WORKSPACE указывает подготовленный стенд для полного сравнения.
 
 Для живой проверки установи DLL в sandbox и используй scripts/native-preview-check.py --auto-load. Python и диагностический EXE в этом тесте читают состояние и управляют сценарием; они не являются пользовательским способом запуска. Не сочетай старую инъекцию --native-loader с установленным dinput8.dll: разные пути могут загрузить две копии плагина. SDK --control --observe-deployment записывает результат Start отдельно от входов прогноза.
 
@@ -118,7 +118,7 @@ To disable, exit and remove the plugin DLL. Remove our shared dinput8.dll only a
 
 ### Compatibility and development
 
-October4,2026 checkpoint: DLL baca89 implementssource-simple fallback source-simple fallback with native army rectangle and preserved partial cells.240 synthetic native mixed comparisons and selector counterexample pass; full58/58 pass. Live generated Archer40→20+20 matches2/2 with normal exit but did not require fallback. Forced live fallback/new broad matrix remain;273/273 belongs to prior a8d794.
+October4,2026 checkpoint: DLL baca89 implements fallback placement for simple source armies with native army rectangle and preserved partial cells.240 synthetic native mixed comparisons and selector counterexample pass; full58/58 pass. Live generated Archer40→20+20 matches2/2 with normal exit but did not require fallback. Forced live fallback/new broad matrix remain;273/273 belongs to prior a8d794.
 
 October4,2026 checkpoint: ten fresh loads on current DLL a8d794 yield **273/273 exact** battles(mixed213/213,solo60/60), all normally closed. Independent strict Superadmin verification passes original forecasts frozen before Start/current hashes/full pack coverage. Verdict goal_completefalse retains remaining branches/live equality/full-algorithm requirements. Legacy CLI exit1 is its old acceptance flag; do not alter preserved JSON. No release published.
 
@@ -138,7 +138,7 @@ Four pinned game hashes define compatibility. A mismatch or module initializatio
 
 Normal H5_Game.exe startup reached the menu with automatic DLL loading; five instrumented battle/card/cleanup cycles then passed through the ordinary game process with both DLL mods present. This is bounded combined-use evidence, not all-arena/all-bank certification. The early published preview.2 mixed-pack run matched1 of7 positions and one predicted stack split; the newer unreleased candidate is described above. Exact placement is not guaranteed. The Heroes/Lobby interface itself was not separately automated.
 
-Developer prerequisites and commands are shared above. Default install contains DLLs only; the old EXE remains a diagnostic target and requires explicit --component Diagnostics installation. The14 native checks allow only the documented absent-game oracle skip. H5_WORKSPACE selects the prepared sandbox for that oracle.
+Developer prerequisites and commands are shared above. Default install contains DLLs only; the old EXE remains a diagnostic target and requires explicit --component Diagnostics installation. The local native checks allow only the documented absent-game oracle skip. H5_WORKSPACE selects the prepared sandbox for that oracle.
 
 Use native-preview-check.py --auto-load after installing sandbox DLLs. Test-time Python/diagnostic inspection is not player runtime. Do not combine legacy --native-loader injection with automatic DLL loading. SDK --control --observe-deployment records actual Start positions separately from prediction inputs.
 
