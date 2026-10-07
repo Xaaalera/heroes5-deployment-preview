@@ -35,6 +35,42 @@ SPEC.loader.exec_module(probe)
 
 @unittest.skipIf(Uc is None, 'Unicorn is required for emulation checks')
 class NativeTests(unittest.TestCase):
+    def test_forced_cleanup_refuses_missing_or_reused_creation_identity(self):
+        import ast
+        import ctypes
+        from ctypes import wintypes
+        from unittest.mock import Mock
+        source = (MOD_ROOT / 'scripts/accuracy-campaign.py').read_text(encoding='utf-8')
+        function = next(node for node in ast.parse(source).body
+                        if isinstance(node, ast.FunctionDef) and node.name == 'stop_hung_owned_sandbox')
+        kernel = Mock()
+        kernel.OpenProcess.return_value = 77
+        def process_times(handle, created, *unused):
+            created._obj.dwLowDateTime = 999
+            created._obj.dwHighDateTime = 0
+            return True
+        kernel.GetProcessTimes.side_effect = process_times
+        library = Mock(return_value=kernel)
+        namespace = {'ctypes': Mock(wraps=ctypes, WinDLL=library), 'wintypes': wintypes, 'Path': Path}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), '<forced-cleanup>', 'exec'), namespace)
+        with self.assertRaisesRegex(RuntimeError, 'creation identity is required'):
+            namespace['stop_hung_owned_sandbox'](123, None, WORKSPACE)
+        library.assert_not_called()
+        with self.assertRaisesRegex(RuntimeError, 'reused PID'):
+            namespace['stop_hung_owned_sandbox'](123, 456, WORKSPACE)
+        kernel.TerminateProcess.assert_not_called()
+        kernel.QueryFullProcessImageNameW.assert_not_called()
+        kernel.CloseHandle.assert_called_once_with(77)
+        def process_path(handle, flags, destination, length):
+            destination.value = str((WORKSPACE / '.local/test-game/bin/H5_Game.exe').resolve())
+            return True
+        kernel.QueryFullProcessImageNameW.side_effect = process_path
+        kernel.TerminateProcess.return_value = True
+        result = namespace['stop_hung_owned_sandbox'](123, 999, WORKSPACE)
+        self.assertEqual(result['status'], 'terminated_hung_owned_sandbox')
+        kernel.TerminateProcess.assert_called_once_with(77, 1)
+        self.assertEqual(kernel.CloseHandle.call_count, 2)
+
     def test_custom_hero_army_requires_known_distinct_positive_bounded_counts(self):
         import ast
         source=(MOD_ROOT/'scripts/accuracy-campaign.py').read_text()

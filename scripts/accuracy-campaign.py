@@ -94,7 +94,9 @@ def save(report, target, completed_battle=None):
             time.sleep(0.05)
 
 
-def stop_hung_owned_sandbox(pid, workspace):
+def stop_hung_owned_sandbox(pid, created, workspace):
+    if type(created) is not int or created <= 0:
+        raise RuntimeError('Owned game creation identity is required before forced cleanup')
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenProcess.restype = wintypes.HANDLE
@@ -104,10 +106,18 @@ def stop_hung_owned_sandbox(pid, workspace):
     kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     kernel.TerminateProcess.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    kernel.GetProcessTimes.restype = wintypes.BOOL
     process = kernel.OpenProcess(0x1001, False, pid)
     if not process:
         return {'status': 'already_exited'}
     try:
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not kernel.GetProcessTimes(process, *[ctypes.byref(value) for value in times]):
+            raise RuntimeError('Cannot verify the hung game creation identity')
+        actual_created = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+        if actual_created != created:
+            raise RuntimeError('Refusing to stop a reused PID belonging to another game session')
         path = ctypes.create_unicode_buffer(1024)
         length = wintypes.DWORD(len(path))
         if not kernel.QueryFullProcessImageNameW(process, 0, path, ctypes.byref(length)):
@@ -1889,6 +1899,7 @@ def run_map(round_number, fixture, report, destination, creature_names, backgrou
         launch_arguments.append('--background')
     launch = json.loads(check.command(check.PYTHON, '-X', 'utf8', str(check.PROBE), *launch_arguments))
     pid = launch['pid']
+    created = launch.get('created')
     hero_control = 'small' if fixture['kind'] == 'authored_polygon' and round_number % 2 == 0 else 'default'
     if report.get('research_hero_army'):
         hero_control = 'custom'
@@ -2211,7 +2222,10 @@ def run_map(round_number, fixture, report, destination, creature_names, backgrou
             run['close'] = check.control('quit')
         except Exception as error:
             run['close_error'] = str(error)
-            run['close'] = stop_hung_owned_sandbox(pid, check.ROOT)
+            try:
+                run['close'] = stop_hung_owned_sandbox(pid, created, check.ROOT)
+            except Exception as cleanup_error:
+                run['close'] = {'status': 'cleanup_unconfirmed', 'reason': str(cleanup_error)}
         save(report, destination)
     if run.get('close', {}).get('status') != 'game_closed':
         raise RuntimeError(f'Round {round_number} did not close normally')

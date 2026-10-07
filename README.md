@@ -1,5 +1,9 @@
 # Heroes V Deployment Preview
 
+RU: аварийное завершение тестового процесса требует исходных PID, времени создания и пути. Если запускатель не вернул время создания или идентичность изменилась, принудительное завершение запрещено; журнал сохраняет неподтверждённую очистку. Обычный запрос выхода остаётся первым действием.
+
+EN: Forced cleanup requires the original PID, creation time and executable path. Missing launch creation identity or a changed process refuses termination and records unconfirmed cleanup. Normal game shutdown is attempted first.
+
 RU: проверенные зависимости: devkit `bc471b6`, Game API `2aa326d`. Мастерская использует один canonical checkout; самостоятельный clone получает закреплённые сабмодули. Исследование алгоритма предиктора остаётся на паузе.
 
 EN: Verified dependency revisions: devkit `bc471b6`, Game API `2aa326d`. The workshop shares canonical checkouts; standalone clones use pinned submodules. Predictor algorithm research remains paused.
@@ -49,7 +53,7 @@ RU: личные проекты автора; не официальные про
 
 ### Разработчику
 
-Checkpoint4 октября2026: DLL baca89 реализует резерв859930 для source-simple с native army rectangle и сохранением частичных клеток.240 синтетических native mixed сравнений и selector counterexample проходят; полный58/58 PASS. Живой generated Archer40→20+20 контроль2/2 с штатным выходом не требовал fallback; forced live fallback/новая широкая матрица ещё нужны.273/273 относится к прежней a8d794.
+Checkpoint4 октября2026: DLL baca89 реализует резервsource-simple fallback для source-simple с native army rectangle и сохранением частичных клеток.240 синтетических native mixed сравнений и selector counterexample проходят; полный58/58 PASS. Живой generated Archer40→20+20 контроль2/2 с штатным выходом не требовал fallback; forced live fallback/новая широкая матрица ещё нужны.273/273 относится к прежней a8d794.
 
 Checkpoint4 октября2026: десять свежих загрузок текущей DLL a8d794 дали **273/273 exact** боёв(mixed213/213,solo60/60), все штатно закрыты. Независимый strict Superadmin verifier PASS по исходным прогнозам до Start/текущим хешам/полноте паков. Вердикт goal_completefalse: оставшиеся ветви, live equality и полный алгоритм ещё не закрыты. Legacy CLI exit1 — старый acceptance flag; не исправляй сохранённый JSON. Выпуска не было.
 
@@ -114,7 +118,7 @@ To disable, exit and remove the plugin DLL. Remove our shared dinput8.dll only a
 
 ### Compatibility and development
 
-October4,2026 checkpoint: DLL baca89 implements859930 source-simple fallback with native army rectangle and preserved partial cells.240 synthetic native mixed comparisons and selector counterexample pass; full58/58 pass. Live generated Archer40→20+20 matches2/2 with normal exit but did not require fallback. Forced live fallback/new broad matrix remain;273/273 belongs to prior a8d794.
+October4,2026 checkpoint: DLL baca89 implementssource-simple fallback source-simple fallback with native army rectangle and preserved partial cells.240 synthetic native mixed comparisons and selector counterexample pass; full58/58 pass. Live generated Archer40→20+20 matches2/2 with normal exit but did not require fallback. Forced live fallback/new broad matrix remain;273/273 belongs to prior a8d794.
 
 October4,2026 checkpoint: ten fresh loads on current DLL a8d794 yield **273/273 exact** battles(mixed213/213,solo60/60), all normally closed. Independent strict Superadmin verification passes original forecasts frozen before Start/current hashes/full pack coverage. Verdict goal_completefalse retains remaining branches/live equality/full-algorithm requirements. Legacy CLI exit1 is its old acceptance flag; do not alter preserved JSON. No release published.
 
