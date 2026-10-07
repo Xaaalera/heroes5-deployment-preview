@@ -1,5 +1,17 @@
 # Heroes V Deployment Preview
 
+RU: проверенные зависимости: devkit `bc471b6`, Game API `2aa326d`. Мастерская использует один canonical checkout; самостоятельный clone получает закреплённые сабмодули. Исследование алгоритма предиктора остаётся на паузе.
+
+EN: Verified dependency revisions: devkit `bc471b6`, Game API `2aa326d`. The workshop shares canonical checkouts; standalone clones use pinned submodules. Predictor algorithm research remains paused.
+
+RU, 2026-10-07: [xkit 0.1.0](https://github.com/Xaaalera/heroes5-mod-devkit/releases/tag/v0.1.0) опубликован с готовым SDK. Новый SDK-плагин выпускается отдельной DLL; общие dinput8.dll и d3d9.dll обеспечивают подключение. Исходная библиотека игры сохраняется локально как d3d9.universe.dll и не распространяется. Проверены две независимые DLL и обычный запуск. Этот плагин сохраняет собственный legacy-контракт и ещё не переведён на HMR.
+EN: xkit 0.1.0 is published with a ready SDK bundle. New SDK plugins ship as separate DLLs with shared dinput8.dll/d3d9.dll infrastructure; the game original remains local as d3d9.universe.dll. Two independent player DLLs and ordinary startup are verified. This existing plugin retains its legacy contract and is not yet migrated to HMR.
+
+
+[Game API](https://github.com/Xaaalera/heroes5-game-api) — shared C++ game bindings / общая библиотека привязок к игре.
+
+RU,2026-10-04: общий devkit разрабатывает ABI3 hot reload и выпуск новых SDK-плагинов в bin/Heroes5Mods/Plugins. Этот предиктор сохраняет текущий legacy DLL-контракт и пока не поддерживает такую перезагрузку. EN: Shared bootstrap remains the ordinary player entry; the SDK prototype does not automatically migrate this plugin. [SDK status/release notes](https://github.com/Xaaalera/heroes5-mod-devkit).
+
 
 ## Author and related projects / Автор и связанные проекты
 
@@ -129,3 +141,14 @@ Use native-preview-check.py --auto-load after installing sandbox DLLs. Test-time
 In a linked workshop, this mod's devkit path is a junction to the single top-level SDK. Run the workshop's `scripts/sync-subrepos.ps1 -Check`, repairing without `-Check`. Current HEAD/gitlink define the version; do not copy shared edits between repos. Standalone clones retain normal submodules. Before a new release commit the SDK changes, synchronize pins and reverify consumers.
 
 An explicit `H5_PREVIEW_DEVKIT=<devkit-checkout>` can select a locally edited SDK for research without changing the pinned gitlink. `accuracy-campaign.py --background` requests a no-activation window and verifies off-screen placement/focus through that SDK. The first live check was refused when the game reclaimed focus/cursor clipping; the corrected helper has not yet been verified in-game. The final `--verify-latest` gate accepts only the pinned devkit, never the local override.
+
+## Standalone use / Работа вне мастерской
+
+RU: этот репозиторий можно использовать отдельно. Начни с его README и AGENTS.md; глобальная папка мастерской не обязательна. Если есть .gitmodules, выполни `git submodule update --init --recursive` после клонирования. В связанной мастерской используй её sync-subrepos вместо создания вторых checkout.
+EN: This repository can be used independently. Start with its README and AGENTS.md; the global workshop is optional. If .gitmodules exists, initialize pinned dependencies with `git submodule update --init --recursive`. In a linked workshop use its canonical dependency synchronization.
+
+- [Devkit commands / команды SDK](https://github.com/Xaaalera/heroes5-mod-devkit/blob/main/docs/commands.md).
+- [Game API contracts / контракты библиотеки](https://github.com/Xaaalera/heroes5-game-api/blob/main/docs/mechanisms/game-bindings.md).
+- [Research index / карта исследований](https://xaaalera.github.io/heroes5-knowledge/reference/research-index/).
+
+[Code standards / стандарты кода](https://github.com/Xaaalera/claude-skills).

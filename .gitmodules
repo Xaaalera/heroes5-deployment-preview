@@ -1,3 +1,6 @@
 [submodule "devkit"]
 	path = devkit
 	url = https://github.com/Xaaalera/heroes5-mod-devkit.git
+[submodule "game-api"]
+	path = game-api
+	url = https://github.com/Xaaalera/heroes5-game-api.git

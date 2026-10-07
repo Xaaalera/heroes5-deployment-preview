@@ -1,19 +1,20 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include "../game-api/include/h5/hooks.hpp"
 #include <cstdint>
 #include <cstring>
 #include <limits>
 
 namespace {
 
-constexpr uintptr_t kRendererEntry = 0x577010;
-constexpr uintptr_t kRendererResume = 0x577016;
-constexpr uintptr_t kAttackEntry = 0x433440;
-constexpr uintptr_t kAttackResume = 0x433445;
+constexpr uintptr_t kRendererEntry = h5::hooks::PlacementRenderer.address;
+constexpr uintptr_t kRendererResume = h5::hooks::PlacementRenderer.Resume();
+constexpr uintptr_t kAttackEntry = h5::hooks::AdventureAttack.address;
+constexpr uintptr_t kAttackResume = h5::hooks::AdventureAttack.Resume();
 constexpr uintptr_t kScriptedSourceEntry = 0x5d434c;
 constexpr uintptr_t kScriptedSourceResume = 0x5d4353;
-constexpr uintptr_t kHoverEntry = 0x5767a0;
-constexpr uintptr_t kHoverResume = 0x5767a6;
+constexpr uintptr_t kHoverEntry = h5::hooks::PlacementHover.address;
+constexpr uintptr_t kHoverResume = h5::hooks::PlacementHover.Resume();
 constexpr uintptr_t kPlacementConstructorEntry = 0x577e70;
 constexpr uintptr_t kPlacementConstructorResume = 0x577e76;
 constexpr uintptr_t kPlacementDestructorEntry = 0x579370;
@@ -4690,15 +4691,15 @@ bool InstallRendererHook() {
     if (g_originalRenderer != nullptr) {
         return true;
     }
-    constexpr unsigned char expectedAttack[] = {0x83, 0xec, 0x50, 0x53, 0x55};
+    constexpr const auto& expectedAttack = h5::hooks::AdventureAttack.expected;
     if (memcmp(reinterpret_cast<const void*>(kAttackEntry), expectedAttack, sizeof(expectedAttack)) != 0) {
         return false;
     }
-    constexpr unsigned char expected[] = {0x55, 0x8b, 0xec, 0x83, 0xe4, 0xf8};
+    constexpr const auto& expected = h5::hooks::PlacementRenderer.expected;
     if (memcmp(reinterpret_cast<const void*>(kRendererEntry), expected, sizeof(expected)) != 0) {
         return false;
     }
-    constexpr unsigned char expectedHover[] = {0x81, 0xec, 0xbc, 0x00, 0x00, 0x00};
+    constexpr const auto& expectedHover = h5::hooks::PlacementHover.expected;
     constexpr unsigned char expectedTooltip[] = {0x81, 0xec, 0x14, 0x07, 0x00, 0x00};
     constexpr unsigned char expectedOutline[] = {0x8b, 0x56, 0x40, 0x8b, 0x46, 0x3c};
     constexpr unsigned char expectedTooltipHitTest[] = {0x8b, 0x4f, 0x98, 0x8b, 0x04, 0xb1};
