@@ -1,0 +1,71 @@
+{
+  "diffHash": "6fb7ff003fe88bf5ddefd66979ef421e85d82390e992146409048f2aa5af698a",
+  "commitSha": "1a068b31782979933a1caeb0fa0ba3b02ec99a5d",
+  "perAgent": {
+    "craft": {
+      "score": 10,
+      "verdict": "PASS"
+    },
+    "architecture": {
+      "score": 10,
+      "verdict": "PASS"
+    },
+    "tests": {
+      "score": 10,
+      "verdict": "PASS"
+    },
+    "docs": {
+      "score": 10,
+      "verdict": "PASS",
+      "review": {
+        "reviewer": "/root/sdk_publish_docs (independent Codex documentation reviewer)",
+        "files": [
+          "AGENTS.md",
+          "CONTRIBUTING.md",
+          "README.md"
+        ],
+        "criteria": {
+          "purpose": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md: Agent duties identify legacy mod and canonical SDK ownership. CONTRIBUTING.md: Contributor protocol separates verification from publication claims. README.md: Explains pre-Start projection behavior, legacy delivery and diagnostic research."
+          },
+          "structure": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md: Reading order, standalone setup and code standards form distinct sections. CONTRIBUTING.md: RU/EN accuracy and independent review duties are explicit. README.md: Player install, compatibility, development and authored research options are discoverable."
+          },
+          "specificity": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md: Pins, independent mod delivery and no automatic HMR migration are explicit. CONTRIBUTING.md: Requires frozen pre-Start evidence and ten loads, all packs,70% mixed threshold and source hashes. README.md: RU/EN fallback now explains placement for simple source armies without an address-derived label or joined-word phrase; cleanup needs original PID/creation/path."
+          },
+          "reproducibility": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md: Standalone recursive submodules and workshop sync sequence provide concrete preparation. CONTRIBUTING.md: Names configured environment, campaign/check commands and final verify-latest. README.md: Build/install/check and research examples retain prerequisites; current test guidance now says local native checks without obsolete counts."
+          },
+          "evidence": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md: Dated SDK acceptance is distinguished from current consumer offline checks. CONTRIBUTING.md: Successful build cannot expand live scope; hook/CI do not authenticate reviewer or gameplay. README.md: Historical273/273 names older a8d794 and remaining goal limits; supplied prior full offline60 and current targeted guard1 stay separate, with no full61 or accuracy claim."
+          },
+          "applicability": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md: Owned game, pinned build, legacy contract and no hidden-input promotion constrain work. CONTRIBUTING.md: Accuracy policy is a future/current required gate, not evidence that this publication review ran it. README.md: Algorithm research paused; no100% accuracy or legacy HMR migration claimed; missing creation identity refuses forced kill."
+          },
+          "translations": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md: RU/EN work and delivery rules carry the same core requirements. CONTRIBUTING.md: RU/EN acceptance and publication rules retain equal scope. README.md: RU/EN active verification guidance agrees; meaningful fallback phrases carry the same behavior. Historical build58/273 and14 counts remain scoped to dated observations."
+          },
+          "maintenance": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md: Dependency pin updates require consumer checks and bilingual docs upkeep. CONTRIBUTING.md: Source changes renew exact-diff review; declared base cannot conceal unchecked code. README.md: Final README corrects active count mismatch and malformed fallback explanation; unchanged AGENTS/CONTRIBUTING continue pin, renewed-review and paused-research rules."
+          }
+        },
+        "findings": []
+      }
+    },
+    "security": {
+      "score": 10,
+      "verdict": "PASS"
+    }
+  },
+  "overall": "PASS",
+  "timestamp": "2026-10-07T12:19:08.380Z"
+}
