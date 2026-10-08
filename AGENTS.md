@@ -33,6 +33,8 @@ Unit checks do not launch a game or commandeer shared input. Work within the aut
 
 ## Public projects / Публичные проекты
 
+- [Game API](https://github.com/Xaaalera/heroes5-game-api) — shared game bindings / общие привязки к игре.
+
 - [Deployment Preview / Предиктор](https://github.com/Xaaalera/heroes5-deployment-preview): native placement projections.
 - [Bank Reference / Справочник армий](https://github.com/Xaaalera/heroes5-bank-reference): possible bank armies.
 - [Mod Devkit / Девкит](https://github.com/Xaaalera/heroes5-mod-devkit): shared tools used to build and test both DLL mods.
