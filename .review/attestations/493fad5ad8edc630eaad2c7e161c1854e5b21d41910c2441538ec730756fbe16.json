@@ -1,6 +1,6 @@
 {
-  "diffHash": "74d373c948f05abe1e647ac6e09a74c497dccc777077e5fc2b90e66a235f90fe",
-  "commitSha": "6f1eeda191fdd995302d58929880a9f093d49d4e",
+  "diffHash": "493fad5ad8edc630eaad2c7e161c1854e5b21d41910c2441538ec730756fbe16",
+  "commitSha": "85e2a5f44b74e97b6fa162a8af738b3989ec6cc1",
   "perAgent": {
     "craft": {
       "verdict": "PASS",
@@ -58,7 +58,7 @@
             "verdict": "PASS"
           },
           "maintenance": {
-            "evidence": "README/AGENTS/CONTRIBUTING route live documentation to the canonical site, while repository-specific checks remain in local configuration/AGENTS; site article updates and independent critic policy are explicit.",
+            "evidence": "Canonical site ownership and repository-specific review rules remain intact. Public-project crosslinks now explicitly include Game API in AGENTS with its correct GitHub URL and shared-binding role; no duplicate living manual introduced.",
             "verdict": "PASS"
           }
         },
@@ -72,5 +72,5 @@
     }
   },
   "overall": "PASS",
-  "timestamp": "2026-10-08T15:34:56.513Z"
+  "timestamp": "2026-10-08T15:47:23.612Z"
 }
