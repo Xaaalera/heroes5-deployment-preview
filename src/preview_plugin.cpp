@@ -3775,8 +3775,9 @@ void __stdcall RenderPlacementPreview(uint32_t owner, uint32_t caller,
 
 bool PlanReferencePlacement(const PreciseResearchState& inputs, uint32_t owner,
     uint32_t rootArgument, uint32_t factoryArgument, uint32_t angle,
-    h5_preview::PlacementDecisionTrace& result) {
+    h5_preview::PlacementDecisionTrace& result, h5_preview::PlacementFieldSnapshot* field = nullptr) {
     result = {};
+    if (field) { *field = {}; }
     if (g_referenceCalculationActive || g_superadminEnabled || !owner ||
         owner != reinterpret_cast<uint32_t>(g_placementOwner) || inputs.version != 3 ||
         inputs.actorInputGeneration != g_attackGeneration || inputs.superadminSourceCount < 1 ||
@@ -3802,7 +3803,16 @@ bool PlanReferencePlacement(const PreciseResearchState& inputs, uint32_t owner,
     __try {
         RenderPlacementPreview(owner, h5::hooks::PlacementRendererCaller, rootArgument, factoryArgument, angle);
         result = *reinterpret_cast<const h5_preview::PlacementDecisionTrace*>(g_outputStorage + 8 + 976);
-    } __except (EXCEPTION_EXECUTE_HANDLER) { result = {}; }
+        if (field && result.version == 1 && result.complete == 1 && result.count > 0 && result.count <= 7 &&
+            result.placementGeneration == static_cast<uint32_t>(g_placementGeneration)) {
+            const auto* output = g_outputStorage + 8;
+            // The first bitmap is working occupancy. The second remains the
+            // original terrain used by the planner and movement preview.
+            h5_preview::CopyPlacementField(output + 2560, *reinterpret_cast<const uint32_t*>(output + 524),
+                *reinterpret_cast<const uint32_t*>(output + 384), *reinterpret_cast<const uint32_t*>(output + 388),
+                static_cast<uint32_t>(g_attackGeneration), *field);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { result = {}; if (field) { *field = {}; } }
     previousPolicy.Load();
     memcpy(g_outputStorage, previousOutput, sizeof(previousOutput));
     memcpy(g_publicTypes, previousTypes, sizeof(previousTypes)); memcpy(g_publicBands, previousBands, sizeof(previousBands));
@@ -3814,7 +3824,7 @@ bool PlanReferencePlacement(const PreciseResearchState& inputs, uint32_t owner,
     __asm { lea eax, floatingState }
     __asm { fxrstor [eax] }
     return result.version == 1 && result.complete == 1 && result.count > 0 && result.count <= 7 &&
-        result.placementGeneration == static_cast<uint32_t>(g_placementGeneration);
+        result.placementGeneration == static_cast<uint32_t>(g_placementGeneration) && (!field || field->version == 1);
 }
 
 __declspec(naked) void RendererHook() {

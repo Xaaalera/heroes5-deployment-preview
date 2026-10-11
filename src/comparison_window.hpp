@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#include <bit>
 #include "deployment_comparison.hpp"
 #include "../game-api/include/h5/camera_input.hpp"
 
@@ -12,33 +13,28 @@ namespace h5_preview {
 // deliberately labelled and must never be mistaken for a captured battle.
 class ComparisonWindow {
     struct Strings {
-        const wchar_t* defensiveExplanation = L"\u0417\u0430\u0449\u0438\u0442\u043d\u044b\u0439 \u0441\u0442\u0440\u043e\u0439: \u043f\u0435\u0440\u0435\u0434 \u043e\u0431\u0449\u0438\u043c \u043f\u0440\u043e\u0445\u043e\u0434\u043e\u043c \u0438\u0449\u0443\u0442\u0441\u044f \u043f\u043e\u0437\u0438\u0446\u0438\u0438 \u043f\u0440\u0438\u043a\u0440\u044b\u0442\u0438\u044f \u0441\u0442\u0440\u0435\u043b\u043a\u043e\u0432.";
-        const wchar_t* spreadExplanation = L"\u0420\u0430\u0437\u0440\u0435\u0436\u0435\u043d\u0438\u0435: \u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u043f\u0440\u043e\u0432\u0435\u0440\u044f\u044e\u0442\u0441\u044f \u0440\u0430\u0437\u043d\u0435\u0441\u0451\u043d\u043d\u044b\u0435 \u0440\u044f\u0434\u044b.";
-        const wchar_t* decisionPhases[8] = {
-            L"\u042d\u0442\u0430\u043f: \u043a\u0440\u0443\u043f\u043d\u044b\u0435 \u043d\u0435\u0441\u0442\u0440\u0435\u043b\u044f\u044e\u0449\u0438\u0435 \u043e\u0442\u0440\u044f\u0434\u044b.", L"\u042d\u0442\u0430\u043f: \u0441\u0442\u0440\u0435\u043b\u043a\u0438.",
-            L"\u042d\u0442\u0430\u043f: \u043e\u0441\u043d\u043e\u0432\u043d\u0430\u044f \u0433\u0440\u0443\u043f\u043f\u0430 \u0441\u0432\u044f\u0437\u0430\u043d\u043d\u044b\u0445 \u043e\u0442\u0440\u044f\u0434\u043e\u0432.", L"\u042d\u0442\u0430\u043f: \u0441\u0432\u044f\u0437\u0430\u043d\u043d\u044b\u0435 \u0433\u043e\u0431\u043b\u0438\u043d\u044b.",
-            L"\u042d\u0442\u0430\u043f: \u043e\u0442\u0440\u044f\u0434\u044b \u0441 \u0437\u0430\u0449\u0438\u0442\u043d\u044b\u043c\u0438 \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044f\u043c\u0438.", L"\u042d\u0442\u0430\u043f: \u043e\u0431\u0449\u0438\u0439 \u043f\u0440\u043e\u0445\u043e\u0434 \u043e\u0441\u0442\u0430\u0432\u0448\u0438\u0445\u0441\u044f \u043e\u0442\u0440\u044f\u0434\u043e\u0432.",
-            L"\u042d\u0442\u0430\u043f: \u0437\u0430\u043f\u0430\u0441\u043d\u044b\u0435 \u043c\u0435\u0441\u0442\u0430 \u0434\u043b\u044f \u043a\u0440\u0443\u043f\u043d\u044b\u0445 \u043e\u0442\u0440\u044f\u0434\u043e\u0432.", L"\u042d\u0442\u0430\u043f: \u0437\u0430\u043f\u0430\u0441\u043d\u044b\u0435 \u043c\u0435\u0441\u0442\u0430 \u0434\u043b\u044f \u043c\u0430\u043b\u044b\u0445 \u043e\u0442\u0440\u044f\u0434\u043e\u0432."
-        };
-        const wchar_t* defensiveRemainder = L"\u042d\u0442\u0430\u043f: \u043e\u0441\u0442\u0430\u043b\u044c\u043d\u044b\u0435 \u043e\u0442\u0440\u044f\u0434\u044b \u043f\u0440\u0438\u043a\u0440\u044b\u0442\u0438\u044f.";
+        const wchar_t* defensiveExplanation = L"\u0417\u0430\u0449\u0438\u0442\u043d\u044b\u0439 \u0441\u0442\u0440\u043e\u0439: \u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u0440\u0430\u0437\u043c\u0435\u0449\u0430\u044e\u0442\u0441\u044f \u0441\u0442\u0440\u0435\u043b\u043a\u0438, \u0437\u0430\u0442\u0435\u043c \u043f\u0440\u0438\u043a\u0440\u044b\u0432\u0430\u044e\u0449\u0438\u0435 \u0438\u0445 \u043e\u0442\u0440\u044f\u0434\u044b.";
+        const wchar_t* spreadExplanation = L"\u0420\u0430\u0437\u0440\u0435\u0436\u0435\u043d\u043d\u044b\u0439 \u0441\u0442\u0440\u043e\u0439: \u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u043f\u0440\u043e\u0432\u0435\u0440\u044f\u044e\u0442\u0441\u044f \u0440\u0430\u0437\u043d\u0435\u0441\u0451\u043d\u043d\u044b\u0435 \u0440\u044f\u0434\u044b, \u0447\u0442\u043e\u0431\u044b \u043e\u0442\u0440\u044f\u0434\u044b \u0441\u0442\u043e\u044f\u043b\u0438 \u0434\u0430\u043b\u044c\u0448\u0435 \u0434\u0440\u0443\u0433 \u043e\u0442 \u0434\u0440\u0443\u0433\u0430.";
         const wchar_t* unknownCreature = L"\u0421\u0443\u0449\u0435\u0441\u0442\u0432\u043e";
-        const wchar_t* noForecastStatus = L"\u041f\u0440\u043e\u0433\u043d\u043e\u0437 \u0434\u043e Start \u0431\u044b\u043b \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d. \u041f\u043e\u043a\u0430\u0437\u0430\u043d\u0430 \u0444\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430.";
-        const wchar_t* factEntryFormat = L"%s \u00b7 %u\n%s\n\u041f\u0440\u043e\u0433\u043d\u043e\u0437 \u0434\u043e Start \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d.\n\u0424\u0430\u043a\u0442: %s \u2014 %s.";
-        const wchar_t* smallRowFormat = L"\u0420\u0430\u0437\u043c\u0435\u0440: 1 \u043a\u043b\u0435\u0442\u043a\u0430. \u0420\u044f\u0434 %u \u043d\u0430 \u0441\u0445\u0435\u043c\u0435.";
-        const wchar_t* largeRowsFormat = L"\u0420\u0430\u0437\u043c\u0435\u0440: 2\u00d72 \u043a\u043b\u0435\u0442\u043a\u0438. \u0420\u044f\u0434\u044b %u \u0438 %u \u043d\u0430 \u0441\u0445\u0435\u043c\u0435.";
-        const wchar_t* shooterWindowFormat = L"\u0427\u0438\u0441\u043b\u043e \u0440\u044f\u0434\u043e\u0432 \u0434\u043b\u044f \u0441\u0442\u0440\u0435\u043b\u043a\u043e\u0432: %u.";
-        const wchar_t* namedEntryFormat = L"%s \u00b7 %u\n%s\n\u041f\u0440\u043e\u0433\u043d\u043e\u0437: %s \u2014 %s. \u0424\u0430\u043a\u0442: %s \u2014 %s.\n%s";
-        const wchar_t* referenceUnavailable = L"\u0414\u0430\u043d\u043d\u044b\u0445 \u0434\u043b\u044f \u043e\u0431\u044a\u044f\u0441\u043d\u0435\u043d\u0438\u044f \u0432\u044b\u0431\u043e\u0440\u0430 \u043a\u043b\u0435\u0442\u043a\u0438 \u043f\u043e\u043a\u0430 \u043d\u0435\u0434\u043e\u0441\u0442\u0430\u0442\u043e\u0447\u043d\u043e.";
-        const wchar_t* referenceMismatch = L"\u041f\u0440\u0438\u0447\u0438\u043d\u0430 \u0432\u044b\u0431\u043e\u0440\u0430 \u043a\u043b\u0435\u0442\u043a\u0438 \u043f\u043e\u043a\u0430 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0430.";
-        const wchar_t* decisionFormat = L"%s\n\u041f\u043e\u0440\u044f\u0434\u043e\u043a \u0440\u0430\u0437\u043c\u0435\u0449\u0435\u043d\u0438\u044f: %u. %s\n%s";
+        const wchar_t* noForecastStatus = L"\u041f\u0440\u043e\u0433\u043d\u043e\u0437 \u0434\u043e \u043d\u0430\u0447\u0430\u043b\u0430 \u0431\u043e\u044f \u0431\u044b\u043b \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d. \u0421\u043f\u0440\u0430\u0432\u0430 \u043f\u043e\u043a\u0430\u0437\u0430\u043d\u0430 \u043d\u0430\u0447\u0430\u043b\u044c\u043d\u0430\u044f \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430.";
+        const wchar_t* factEntryFormat = L"%s \u00b7 \u043e\u0442\u0440\u044f\u0434 %u\n%s\n\u041f\u043e\u0441\u043b\u0435 \u043d\u0430\u0447\u0430\u043b\u0430: %s. \u0427\u0438\u0441\u043b\u0435\u043d\u043d\u043e\u0441\u0442\u044c: %s \u2014 %s.\n%s";
+        const wchar_t* shooterWindowFormat = L"\u041f\u0440\u0435\u0434\u043f\u043e\u0447\u0442\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u0440\u044f\u0434\u044b \u0441\u0442\u0440\u0435\u043b\u043a\u043e\u0432: %s. \u042d\u0442\u043e \u043d\u0430\u0431\u043e\u0440 \u0440\u044f\u0434\u043e\u0432, \u0430 \u043d\u0435 \u043e\u0447\u0435\u0440\u0435\u0434\u044c \u043e\u0442\u0440\u044f\u0434\u043e\u0432.";
+        const wchar_t* smallPositionFormat = L"\u0440\u044f\u0434 %u, %u-\u044f \u043a\u043e\u043b\u043e\u043d\u043a\u0430 \u0441\u043f\u0440\u0430\u0432\u0430";
+        const wchar_t* largePositionFormat = L"\u0440\u044f\u0434\u044b %u \u0438 %u, \u043a\u043e\u043b\u043e\u043d\u043a\u0438 %u\u2013%u \u0441\u043f\u0440\u0430\u0432\u0430";
+        const wchar_t* positionComparisonFormat = L"\u041f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u0435: \u043f\u0440\u043e\u0433\u043d\u043e\u0437 \u2014 %s; \u043f\u043e\u0441\u043b\u0435 \u043d\u0430\u0447\u0430\u043b\u0430 \u2014 %s.";
+        const wchar_t* ownEntryFormat = L"%s \u00b7 \u043e\u0442\u0440\u044f\u0434 \u0433\u0435\u0440\u043e\u044f %u\n\u041d\u0430\u0447\u0430\u043b\u044c\u043d\u043e\u0435 \u043f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u0435: %s. \u0427\u0438\u0441\u043b\u0435\u043d\u043d\u043e\u0441\u0442\u044c: %s.\n%s";
+        const wchar_t* namedEntryFormat = L"%s \u00b7 \u043e\u0442\u0440\u044f\u0434 %u\n%s\n%s\n\u0427\u0438\u0441\u043b\u0435\u043d\u043d\u043e\u0441\u0442\u044c: \u043f\u0440\u043e\u0433\u043d\u043e\u0437 \u2014 %s (%s); \u043f\u043e\u0441\u043b\u0435 \u043d\u0430\u0447\u0430\u043b\u0430 \u2014 %s (%s).\n%s\n%s";
+        const wchar_t* referenceUnavailable = L"\u0420\u0430\u0441\u0447\u0451\u0442 \u0441 \u043f\u043e\u043b\u043d\u044b\u043c\u0438 \u0434\u0430\u043d\u043d\u044b\u043c\u0438 \u0434\u043b\u044f \u044d\u0442\u043e\u0433\u043e \u0431\u043e\u044f \u043d\u0435 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d. \u0421\u043f\u0440\u0430\u0432\u0430 \u043f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u0444\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u043a\u043b\u0435\u0442\u043a\u0438.";
+        const wchar_t* referenceMismatch = L"\u0420\u0430\u0441\u0447\u0451\u0442 \u0441 \u043f\u043e\u043b\u043d\u044b\u043c\u0438 \u0434\u0430\u043d\u043d\u044b\u043c\u0438 \u043d\u0435 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u043b \u043d\u0430\u0447\u0430\u043b\u044c\u043d\u0443\u044e \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0443. \u041f\u0440\u0438\u0447\u0438\u043d\u0430 \u0432\u044b\u0431\u043e\u0440\u0430 \u044d\u0442\u043e\u0439 \u043a\u043b\u0435\u0442\u043a\u0438 \u0435\u0449\u0451 \u043f\u0440\u043e\u0432\u0435\u0440\u044f\u0435\u0442\u0441\u044f.";
+        const wchar_t* decisionFormat = L"\u041f\u043e\u0447\u0435\u043c\u0443 \u0437\u0434\u0435\u0441\u044c \u2014 \u043f\u043e \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043d\u043e\u043c\u0443 \u0430\u043b\u0433\u043e\u0440\u0438\u0442\u043c\u0443:\n%u-\u0439 \u0432 \u043e\u0447\u0435\u0440\u0435\u0434\u0438 \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0438 (\u043d\u0435 \u043f\u043e\u0440\u044f\u0434\u043e\u043a \u0445\u043e\u0434\u043e\u0432). %s\n%s";
         const wchar_t* decisionRules[7] = {
-            L"\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0432\u044b\u0431\u043e\u0440\u0430 \u043a\u043b\u0435\u0442\u043a\u0438 \u043d\u0435 \u0437\u0430\u043f\u0438\u0441\u0430\u043d\u043e.",
-            L"\u041a\u043b\u0435\u0442\u043a\u0430 \u0432\u044b\u0431\u0440\u0430\u043d\u0430 \u043f\u043e \u043f\u0440\u0438\u043e\u0440\u0438\u0442\u0435\u0442\u0430\u043c \u0440\u044f\u0434\u043e\u0432 \u0441\u0440\u0435\u0434\u0438 \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0445 \u043c\u0435\u0441\u0442.",
-            L"\u0418\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u043d\u0430 \u043f\u0440\u043e\u0441\u0442\u0430\u044f \u0441\u0445\u0435\u043c\u0430 \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0438 \u0434\u043b\u044f \u044d\u0442\u043e\u0433\u043e \u0441\u043e\u0441\u0442\u0430\u0432\u0430.",
-            L"\u041a\u043b\u0435\u0442\u043a\u0430 \u0432\u044b\u0431\u0440\u0430\u043d\u0430 \u0437\u0430\u0449\u0438\u0442\u043d\u043e\u0439 \u0432\u0435\u0442\u043a\u043e\u0439 \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0438 \u0441 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u043e\u0439 \u0441\u0432\u043e\u0431\u043e\u0434\u043d\u043e\u0433\u043e \u043c\u0435\u0441\u0442\u0430.",
-            L"\u041e\u0442\u0440\u044f\u0434 \u0440\u0430\u0437\u043c\u0435\u0449\u0451\u043d \u043d\u0430 \u044d\u0442\u0430\u043f\u0435 \u043e\u0441\u0442\u0430\u0432\u0448\u0438\u0445\u0441\u044f \u043e\u0442\u0440\u044f\u0434\u043e\u0432, \u0441 \u043f\u0435\u0440\u0435\u0431\u043e\u0440\u043e\u043c \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0445 \u043a\u043e\u043b\u043e\u043d\u043e\u043a.",
-            L"\u041a\u043b\u0435\u0442\u043a\u0430 \u0432\u044b\u0431\u0440\u0430\u043d\u0430 \u0441\u043f\u0435\u0446\u0438\u0430\u043b\u044c\u043d\u044b\u043c \u043f\u0440\u0430\u0432\u0438\u043b\u043e\u043c \u0441\u0432\u044f\u0437\u0430\u043d\u043d\u043e\u0433\u043e \u0432\u0441\u043f\u043e\u043c\u043e\u0433\u0430\u0442\u0435\u043b\u044c\u043d\u043e\u0433\u043e \u043e\u0442\u0440\u044f\u0434\u0430.",
-            L"\u0418\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u043d\u043e \u043f\u0440\u0430\u0432\u0438\u043b\u043e \u0440\u0430\u0437\u043c\u0435\u0449\u0435\u043d\u0438\u044f \u0435\u0434\u0438\u043d\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0433\u043e \u043e\u0442\u0440\u044f\u0434\u0430."
+            L"\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0432\u044b\u0431\u043e\u0440\u0430 \u043a\u043b\u0435\u0442\u043a\u0438 \u043d\u0435 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e.",
+            L"\u0420\u044f\u0434\u044b \u043e\u0446\u0435\u043d\u0438\u0432\u0430\u044e\u0442\u0441\u044f \u0441 \u0443\u0447\u0451\u0442\u043e\u043c \u0440\u0430\u0441\u043f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u044f \u0430\u0440\u043c\u0438\u0438 \u0433\u0435\u0440\u043e\u044f. \u0417\u0430\u043d\u044f\u0442\u044b\u0435 \u043a\u043b\u0435\u0442\u043a\u0438 \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u044e\u0442\u0441\u044f; \u0432\u044b\u0431\u0438\u0440\u0430\u0435\u0442\u0441\u044f \u043f\u0435\u0440\u0432\u043e\u0435 \u043f\u043e\u0434\u0445\u043e\u0434\u044f\u0449\u0435\u0435 \u043c\u0435\u0441\u0442\u043e.",
+            L"\u0414\u043b\u044f \u044d\u0442\u043e\u0433\u043e \u0441\u043e\u0441\u0442\u0430\u0432\u0430 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442\u0441\u044f \u043f\u0440\u043e\u0441\u0442\u0430\u044f \u0441\u0445\u0435\u043c\u0430 \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0438.",
+            L"\u041f\u043e\u0441\u043b\u0435 \u0441\u0442\u0440\u0435\u043b\u043a\u043e\u0432 \u043f\u0440\u043e\u0432\u0435\u0440\u044f\u044e\u0442\u0441\u044f \u043c\u0435\u0441\u0442\u0430 \u0440\u044f\u0434\u043e\u043c \u0441 \u0443\u0436\u0435 \u0437\u0430\u043d\u044f\u0442\u044b\u043c\u0438 \u043a\u043b\u0435\u0442\u043a\u0430\u043c\u0438. \u0411\u0435\u0440\u0451\u0442\u0441\u044f \u043f\u0435\u0440\u0432\u043e\u0435, \u0433\u0434\u0435 \u043e\u0442\u0440\u044f\u0434 \u043f\u043e\u043c\u0435\u0449\u0430\u0435\u0442\u0441\u044f \u0446\u0435\u043b\u0438\u043a\u043e\u043c.",
+            L"\u0412 \u043f\u0440\u0435\u0434\u044b\u0434\u0443\u0449\u0438\u0445 \u043f\u0440\u043e\u0445\u043e\u0434\u0430\u0445 \u043e\u0442\u0440\u044f\u0434 \u043d\u0435 \u0440\u0430\u0437\u043c\u0435\u0441\u0442\u0438\u043b\u0441\u044f. \u0414\u043b\u044f \u043d\u0435\u0433\u043e \u043f\u0440\u043e\u0432\u0435\u0440\u044f\u044e\u0442\u0441\u044f \u0437\u0430\u043f\u0430\u0441\u043d\u044b\u0435 \u043a\u043e\u043b\u043e\u043d\u043a\u0438.",
+            L"\u041c\u0435\u0441\u0442\u043e \u0432\u044b\u0431\u0438\u0440\u0430\u0435\u0442\u0441\u044f \u043f\u043e \u043f\u0440\u0430\u0432\u0438\u043b\u0443 \u0434\u043b\u044f \u0441\u0432\u044f\u0437\u0430\u043d\u043d\u044b\u0445 \u043e\u0442\u0440\u044f\u0434\u043e\u0432: \u0433\u043e\u0431\u043b\u0438\u043d\u043e\u0432 \u0438 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u044e\u0449\u0438\u0445 \u0438\u0445 \u0441\u0443\u0449\u0435\u0441\u0442\u0432.",
+            L"\u0412 \u0430\u0440\u043c\u0438\u0438 \u043e\u0434\u0438\u043d \u043e\u0442\u0440\u044f\u0434: \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442\u0441\u044f \u043e\u0442\u0434\u0435\u043b\u044c\u043d\u043e\u0435 \u043f\u0440\u0430\u0432\u0438\u043b\u043e \u043e\u0434\u0438\u043d\u043e\u0447\u043d\u043e\u0439 \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0438."
         };
         const wchar_t* decisionRoles[2] = {L"\u0411\u043b\u0438\u0436\u043d\u0438\u0439 \u0431\u043e\u0439.", L"\u0421\u0442\u0440\u0435\u043b\u043e\u043a."};
         const wchar_t* title = L"\u041f\u0440\u0435\u0434\u0438\u043a\u0442\u043e\u0440 \u2014 \u043f\u043e\u0447\u0435\u043c\u0443 \u043d\u0435 \u0441\u043e\u0432\u043f\u0430\u043b\u043e? [\u0414\u0435\u043c\u043e\u043d\u0441\u0442\u0440\u0430\u0446\u0438\u044f]";
@@ -48,11 +44,13 @@ class ComparisonWindow {
         const wchar_t* actual = L"\u0424\u0410\u041a\u0422 \u0412 \u041d\u0410\u0427\u0410\u041b\u0415 \u0411\u041e\u042f";
         const wchar_t* hint = L"\u041f\u043e\u0437\u0438\u0446\u0438\u0438 \u0434\u043e \u043f\u0435\u0440\u0432\u043e\u0433\u043e \u0445\u043e\u0434\u0430. \u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043e\u0442\u0440\u044f\u0434 \u0434\u043b\u044f \u043f\u043e\u044f\u0441\u043d\u0435\u043d\u0438\u044f.";
         const wchar_t* ownArmy = L"\u0417\u0415\u041b\u0401\u041d\u042b\u0419 \u2014 \u0430\u0440\u043c\u0438\u044f \u0433\u0435\u0440\u043e\u044f";
-        const wchar_t* realBattle = L"\u0420\u0435\u0430\u043b\u044c\u043d\u044b\u0439 \u0431\u043e\u0439: \u043f\u0440\u043e\u0433\u043d\u043e\u0437 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d \u0434\u043e Start, \u0444\u0430\u043a\u0442 \u0441\u043d\u044f\u0442 \u043f\u0440\u0438 \u043f\u0440\u0438\u043d\u044f\u0442\u0438\u0438 \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0438";
+        const wchar_t* realBattle = L"\u041f\u0440\u043e\u0433\u043d\u043e\u0437 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d \u0434\u043e \u043d\u0430\u0447\u0430\u043b\u0430 \u0431\u043e\u044f; \u0441\u043f\u0440\u0430\u0432\u0430 \u2014 \u043d\u0430\u0447\u0430\u043b\u044c\u043d\u0430\u044f \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430.";
         const wchar_t* realTitle = L"\u041f\u0440\u0435\u0434\u0438\u043a\u0442\u043e\u0440 \u2014 \u0440\u0430\u0437\u0431\u043e\u0440 \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0438";
         const wchar_t* button = L"\u0420\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430";
         const wchar_t* ownDescription = L"\u0410\u0440\u043c\u0438\u044f \u0433\u0435\u0440\u043e\u044f. \u041f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u043d\u0430\u0447\u0430\u043b\u044c\u043d\u044b\u0435 \u043f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u0435 \u0438 \u0447\u0438\u0441\u043b\u0435\u043d\u043d\u043e\u0441\u0442\u044c.";
-        const wchar_t* statusFormat = L"\u041f\u0440\u043e\u0433\u043d\u043e\u0437: %u \u043e\u0442\u0440\u044f\u0434\u043e\u0432. \u0424\u0430\u043a\u0442: %u. \u0421\u043e\u0432\u043f\u0430\u043b\u043e \u043f\u043e \u043a\u043b\u0435\u0442\u043a\u0430\u043c: %u. \u041f\u0440\u043e\u0433\u043d\u043e\u0437 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d \u0434\u043e Start.";
+        const wchar_t* terrainHint = L"\u0412 \u043a\u043b\u0435\u0442\u043a\u0435 \u2014 \u043d\u043e\u043c\u0435\u0440 \u043e\u0442\u0440\u044f\u0434\u0430. \u0428\u0442\u0440\u0438\u0445\u043e\u0432\u043a\u0430 \u2014 \u043f\u0440\u0435\u043f\u044f\u0442\u0441\u0442\u0432\u0438\u044f.";
+        const wchar_t* noTerrainHint = L"\u0412 \u043a\u043b\u0435\u0442\u043a\u0435 \u2014 \u043d\u043e\u043c\u0435\u0440 \u043e\u0442\u0440\u044f\u0434\u0430. \u041f\u0440\u0435\u043f\u044f\u0442\u0441\u0442\u0432\u0438\u044f \u043d\u0435 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u044b.";
+        const wchar_t* statusFormat = L"\u041f\u0440\u043e\u0433\u043d\u043e\u0437: %u \u043e\u0442\u0440\u044f\u0434\u043e\u0432. \u041f\u043e\u0441\u043b\u0435 \u043d\u0430\u0447\u0430\u043b\u0430: %u. \u0421\u043e\u0432\u043f\u0430\u043b\u043e \u043f\u043e \u043a\u043b\u0435\u0442\u043a\u0430\u043c: %u. \u0421\u0440\u0430\u0432\u043d\u0438\u0432\u0430\u044e\u0442\u0441\u044f \u043d\u0430\u0447\u0430\u043b\u044c\u043d\u044b\u0435 \u043f\u043e\u0437\u0438\u0446\u0438\u0438.";
         const wchar_t* unknownQuantity = L"\u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u043e";
         const wchar_t* missingStack = L"\u043d\u0435\u0442 \u043e\u0442\u0440\u044f\u0434\u0430";
         const wchar_t* splitDifference = L"\u0420\u0430\u0437\u0434\u0435\u043b\u0435\u043d\u0438\u0435 \u043d\u0430 \u043e\u0442\u0440\u044f\u0434\u044b \u043e\u0442\u043b\u0438\u0447\u0430\u0435\u0442\u0441\u044f. \u0415\u0433\u043e \u0432\u043b\u0438\u044f\u043d\u0438\u0435 \u043d\u0430 \u043a\u043b\u0435\u0442\u043a\u0438 \u0435\u0449\u0451 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u043e \u043f\u0435\u0440\u0435\u0441\u0447\u0451\u0442\u043e\u043c.";
@@ -84,11 +82,11 @@ class ComparisonWindow {
     inline static bool demonstration = true, realBattleAvailable = false;
     inline static uint32_t realNeutralCount = 0, realEntryCount = 0;
     inline static int realPositions[21][5]{};
-    inline static uint32_t realQuantities[21][2]{};
     inline static bool realVisible[21][2]{};
     inline static wchar_t realDetails[21][1536]{};
     inline static wchar_t realStatus[192]{};
     inline static DeploymentComparison realComparison{};
+    inline static PlacementFieldSnapshot realField{};
     inline static RECT battlefields[2]{};
     inline static RECT closeButton{};
     inline static int cellSize = 24;
@@ -181,13 +179,19 @@ class ComparisonWindow {
         SelectObject(canvas, font); DeleteObject(titleFont);
         Label(canvas, {26, 74, client.right - 26, 99}, demonstration ? text.sample : realStatus, RGB(204, 183, 126));
         Label(canvas, {26, 141, client.right / 3, 174}, text.ownArmy, RGB(138, 213, 145));
-        Label(canvas, {client.right / 3, 141, client.right - 26, 174}, text.hint, RGB(195, 205, 177));
-        RECT descriptionBounds{0, 0, client.right - 72, 0};
-        DrawTextW(canvas, demonstration ? text.details[selected] : realDetails[selected], -1,
-            &descriptionBounds, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+        Label(canvas, {client.right / 3, 136, client.right - 26, 180},
+            demonstration ? text.hint : realField.version == 1 ? text.terrainHint : text.noTerrainHint, RGB(195, 205, 177));
+        LONG descriptionHeight = 0;
+        const uint32_t detailCount = demonstration ? 6u : realEntryCount;
+        for (uint32_t index = 0; index < detailCount; ++index) {
+            RECT bounds{0, 0, client.right - 72, 0};
+            DrawTextW(canvas, demonstration ? text.details[index] : realDetails[index], -1,
+                &bounds, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+            descriptionHeight = (std::max)(descriptionHeight, bounds.bottom);
+        }
         constexpr int fieldGap = 64, outsideSpace = 96;
         cellSize = (std::max)(12L, (std::min)((client.right - fieldGap - outsideSpace) / (2 * Columns),
-            (client.bottom - 285 - descriptionBounds.bottom) / Rows));
+            (client.bottom - 285 - descriptionHeight) / Rows));
         const int fieldWidth = cellSize * Columns;
         const int firstLeft = (client.right - (2 * fieldWidth + fieldGap + 48)) / 2;
         for (int phase = 0; phase < 2; ++phase) {
@@ -199,6 +203,20 @@ class ComparisonWindow {
                 phase ? Actual : Forecast, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             RECT frame = field; InflateRect(&frame, 5, 5);
             Panel(canvas, frame, RGB(17, 28, 21), RGB(116, 92, 52));
+            if (!demonstration && realField.version == 1) {
+                const auto savedCanvas = SaveDC(canvas);
+                SetBkMode(canvas, OPAQUE); SetBkColor(canvas, RGB(36, 42, 36));
+                const auto obstacleBrush = CreateHatchBrush(HS_DIAGCROSS, RGB(125, 130, 112));
+                for (int row = 0; row < Rows; ++row) {
+                    for (int column = 0; column < Columns; ++column) {
+                        if (!(realField.blockedRows[Rows - row] & (1u << (column + 2)))) { continue; }
+                        RECT obstacle{field.left + column * cellSize, field.top + row * cellSize,
+                            field.left + (column + 1) * cellSize, field.top + (row + 1) * cellSize};
+                        FillRect(canvas, &obstacle, obstacleBrush);
+                    }
+                }
+                DeleteObject(obstacleBrush); RestoreDC(canvas, savedCanvas);
+            }
             auto gridPen = CreatePen(PS_SOLID, 1, RGB(59, 83, 66));
             auto previousPen = SelectObject(canvas, gridPen);
             for (int column = 0; column <= Columns; ++column) {
@@ -240,9 +258,13 @@ class ComparisonWindow {
                 Panel(canvas, token, fillColor, color);
                 wchar_t caption[32]{};
                 if (demonstration) { swprintf_s(caption, L"%s%d", text.symbols[index], quantities[index]); }
-                else if (realQuantities[index][phase]) { swprintf_s(caption, L"%u", realQuantities[index][phase]); }
-                else { wcscpy_s(caption, L"?"); }
-                Label(canvas, token, caption, color, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                // Stable identifiers match the selected card. Exact or ranged
+                // quantities remain fully readable in its details; long counts
+                // cannot be clipped into a misleading different quantity.
+                else { swprintf_s(caption, L"%u", ownArmy ? index - neutralCount + 1 : index + 1); }
+                RECT captionArea = token;
+                if (!demonstration) { InflateRect(&captionArea, 2, 2); }
+                Label(canvas, captionArea, caption, color, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                 if (index == selected) {
                     InflateRect(&token, 2, 2);
                     auto outline = CreateSolidBrush(RGB(245, 244, 240));
@@ -288,6 +310,21 @@ class ComparisonWindow {
                 complete = SetPropW(handle, names[index],
                     reinterpret_cast<HANDLE>(static_cast<intptr_t>(values[index]) + 1)) && complete;
             }
+            uint32_t obstacleCount = 0;
+            const bool terrainKnown = !demonstration && realField.version == 1;
+            for (int row = 0; row < 30; ++row) {
+                const uint32_t cells = terrainKnown && row < Rows
+                    ? (realField.blockedRows[Rows - row] >> 2) & ((1u << Columns) - 1) : 0;
+                obstacleCount += std::popcount(cells);
+                wchar_t property[64]{};
+                swprintf_s(property, L"H5Comparison.TerrainRow.%d.v1", row);
+                complete = SetPropW(handle, property,
+                    reinterpret_cast<HANDLE>(static_cast<uintptr_t>(cells) + 1)) && complete;
+            }
+            complete = SetPropW(handle, L"H5Comparison.TerrainKnown.v1",
+                reinterpret_cast<HANDLE>(static_cast<uintptr_t>(terrainKnown) + 1)) && complete;
+            complete = SetPropW(handle, L"H5Comparison.ObstacleCount.v1",
+                reinterpret_cast<HANDLE>(static_cast<uintptr_t>(obstacleCount) + 1)) && complete;
             complete = SetPropW(handle, L"H5Comparison.PaintEpoch.v1",
                 reinterpret_cast<HANDLE>(previousPaint < UINT32_MAX ? previousPaint + 1 : 1)) && complete;
             SetPropW(handle, L"H5Comparison.LayoutReady.v1", reinterpret_cast<HANDLE>(complete ? 1 : 0));
@@ -420,12 +457,34 @@ public:
     static void ReadBattleGeometry(int& columns, int& rows, uint32_t& battleId) {
         columns = Columns; rows = Rows; battleId = currentBattleId;
     }
+    // Copies the saved real-battle formatter output, independently of any
+    // demonstration currently shown. Used by native snapshot replay.
+    static bool ReadBattleEntryExplanation(uint32_t index, wchar_t* output, uint32_t capacity) {
+        if (!output || !capacity) { return false; }
+        output[0] = 0;
+        if (!realBattleAvailable || index >= realEntryCount || wcslen(realDetails[index]) >= capacity) { return false; }
+        wcscpy_s(output, capacity, realDetails[index]);
+        return true;
+    }
+    static bool ReadBattleField(PlacementFieldSnapshot& field) {
+        field = realField;
+        return realBattleAvailable && field.version == 1;
+    }
     static bool SetBattle(const ComparisonStack* forecast, uint32_t forecastCount,
         const ComparisonStack* actual, uint32_t actualCount, const ComparisonStack* own, uint32_t ownCount,
         const PlacementDecisionTrace* decisions = nullptr, const wchar_t (*quantityLabels)[32] = nullptr,
         bool (*resolveName)(uint32_t, wchar_t*, uint32_t) = nullptr,
-        uint32_t nativeWidth = 16, uint32_t nativeHeight = 12, uint32_t battleId = 0) {
+        uint32_t nativeWidth = 16, uint32_t nativeHeight = 12, uint32_t battleId = 0,
+        const PlacementFieldSnapshot* field = nullptr) {
         if (nativeWidth < 8 || nativeWidth > 32 || nativeHeight < 4 || nativeHeight > 32) { return false; }
+        if (field && (field->version != 1 || field->generation != battleId ||
+            field->width != nativeWidth || field->height != nativeHeight)) { return false; }
+        if (field) {
+            const uint32_t allowed = nativeWidth == 32 ? UINT32_MAX : (1u << nativeWidth) - 1;
+            for (uint32_t row = 0; row < 32; ++row) {
+                if ((field->blockedRows[row] & ~allowed) || (row >= nativeHeight && field->blockedRows[row])) { return false; }
+            }
+        }
         const auto comparison = CompareDeployments(forecast, forecastCount, actual, actualCount);
         if (!comparison.valid || !own || ownCount > 7 || !ownCount) { return false; }
         for (uint32_t index = 0; index < ownCount; ++index) {
@@ -433,6 +492,7 @@ public:
         }
         Columns = static_cast<int>(nativeWidth) - 4; Rows = static_cast<int>(nativeHeight) - 2;
         currentBattleId = battleId;
+        realField = field ? *field : PlacementFieldSnapshot{};
         const auto referenceComparison = decisions ? CompareReferenceDecisions(*decisions, actual, actualCount) : ReferenceDecisionComparison{};
         realComparison = comparison; realNeutralCount = comparison.entryCount;
         realEntryCount = realNeutralCount + ownCount;
@@ -459,7 +519,6 @@ public:
             for (uint32_t phase = 0; phase < 2; ++phase) {
                 const auto* stack = ownArmy ? observed : phase ? observed : expected;
                 realVisible[index][phase] = stack != nullptr;
-                realQuantities[index][phase] = stack ? stack->quantity : 0;
                 realPositions[index][phase * 2] = stack ? stack->x - static_cast<int32_t>(stack->footprint) - 1 : 0;
                 realPositions[index][phase * 2 + 1] = stack ? Rows - stack->y : 0;
             }
@@ -473,20 +532,15 @@ public:
                 }
             }
             const wchar_t* visibleComparison = ownArmy ? text.ownDescription : text.differences[static_cast<uint32_t>(entry.difference)];
-            const wchar_t* explanation = visibleComparison;
-            wchar_t decisionExplanation[768]{};
+            const wchar_t* explanation = L"";
+            wchar_t decisionExplanation[1024]{};
             if (!ownArmy && observed) {
                 if (referenceComparison.status == ReferenceDecisionStatus::MatchesFact) {
                     const auto& decision = decisions->records[referenceComparison.decisionForActual[entry.actualIndex]];
-                    swprintf_s(decisionExplanation, text.decisionFormat, visibleComparison, decision.order,
+                    swprintf_s(decisionExplanation, text.decisionFormat, decision.order,
                         text.decisionRoles[decision.shooter], text.decisionRules[static_cast<uint32_t>(decision.rule)]);
                     const bool complexPlacement = decision.rule != PlacementDecisionRule::Simple &&
                         decision.rule != PlacementDecisionRule::Solo && decision.rule != PlacementDecisionRule::Unknown;
-                    if (complexPlacement) {
-                        wcscat_s(decisionExplanation, L"\n");
-                        wcscat_s(decisionExplanation, decision.defensive && decision.phase == 2
-                            ? text.defensiveRemainder : text.decisionPhases[decision.phase]);
-                    }
                     if (complexPlacement && decision.defensive) {
                         wcscat_s(decisionExplanation, L"\n");
                         wcscat_s(decisionExplanation, text.defensiveExplanation);
@@ -495,22 +549,26 @@ public:
                         wcscat_s(decisionExplanation, L"\n");
                         wcscat_s(decisionExplanation, text.spreadExplanation);
                     }
-                    if (decision.y >= static_cast<int32_t>(decision.footprint) && decision.y <= Rows) {
-                        wchar_t geometry[160]{};
-                        const int row = Rows - decision.y;
-                        if (decision.footprint == 2) {
-                            swprintf_s(geometry, text.largeRowsFormat, RowLabel(row), RowLabel(row + 1));
-                        } else { swprintf_s(geometry, text.smallRowFormat, RowLabel(row)); }
-                        wcscat_s(decisionExplanation, L"\n"); wcscat_s(decisionExplanation, geometry);
-                    }
-                    if (decision.shooter && decision.windowLength > 0 && decision.windowLength <= Rows &&
+                    if (decision.shooter && decision.windowStart >= 0 && decision.windowStart < Rows &&
+                        decision.windowLength > 0 && decision.windowLength <= Rows &&
                         (decision.rule == PlacementDecisionRule::RankedRow || decision.rule == PlacementDecisionRule::Protective)) {
-                        wchar_t shelter[128]{}; swprintf_s(shelter, text.shooterWindowFormat, decision.windowLength);
+                        std::array<int, 30> preferred{};
+                        for (int row = 0; row < decision.windowLength; ++row) {
+                            const int nativeRow = (decision.windowStart + row) % Rows + 1;
+                            preferred[row] = RowLabel(Rows - nativeRow);
+                        }
+                        std::sort(preferred.begin(), preferred.begin() + decision.windowLength);
+                        wchar_t rowList[128]{};
+                        for (int row = 0; row < decision.windowLength; ++row) {
+                            wchar_t number[12]{}; swprintf_s(number, row ? L", %d" : L"%d", preferred[row]);
+                            wcscat_s(rowList, number);
+                        }
+                        wchar_t shelter[256]{}; swprintf_s(shelter, text.shooterWindowFormat, rowList);
                         wcscat_s(decisionExplanation, L"\n"); wcscat_s(decisionExplanation, shelter);
                     }
                     explanation = decisionExplanation;
                 } else {
-                    swprintf_s(decisionExplanation, L"%s\n%s", visibleComparison,
+                    swprintf_s(decisionExplanation, L"%s",
                         referenceComparison.status == ReferenceDecisionStatus::DisagreesWithFact
                             ? text.referenceMismatch : text.referenceUnavailable);
                     explanation = decisionExplanation;
@@ -527,12 +585,32 @@ public:
                 }
                 else { swprintf_s(counts[phase], L"%u", stack->quantity); }
             }
+            wchar_t positions[2][160]{};
+            for (uint32_t phase = 0; phase < 2; ++phase) {
+                const auto* stack = phase ? observed : expectedForDetails;
+                if (!stack) { wcscpy_s(positions[phase], text.missingStack); continue; }
+                const int row = Rows - stack->y;
+                if (row < 0 || row + static_cast<int>(stack->footprint) > Rows) {
+                    wcscpy_s(positions[phase], text.missingStack); continue;
+                }
+                const int rightColumn = static_cast<int>(nativeWidth) - 2 - stack->x;
+                if (stack->footprint == 2) {
+                    swprintf_s(positions[phase], text.largePositionFormat, RowLabel(row), RowLabel(row + 1),
+                        rightColumn, rightColumn + 1);
+                } else { swprintf_s(positions[phase], text.smallPositionFormat, RowLabel(row), rightColumn); }
+            }
+            wchar_t positionComparison[352]{};
+            swprintf_s(positionComparison, text.positionComparisonFormat, positions[0], positions[1]);
             swprintf_s(realDetails[index], text.namedEntryFormat,
-                observed ? names[1] : names[0], ownArmy ? index - realNeutralCount + 1 : index + 1,
-                explanation, names[0], counts[0], names[1], counts[1],
-                !ownArmy && comparison.splitChanged ? text.splitDifference : L"");
-            if (!ownArmy && !forecastCount) {
-                swprintf_s(realDetails[index], text.factEntryFormat, names[1], index + 1, explanation, names[1], counts[1]);
+                observed ? names[1] : names[0], index + 1, visibleComparison, positionComparison,
+                names[0], counts[0], names[1], counts[1], explanation,
+                comparison.splitChanged ? text.splitDifference : L"");
+            if (ownArmy) {
+                swprintf_s(realDetails[index], text.ownEntryFormat, names[1], index - realNeutralCount + 1,
+                    positions[1], counts[1], text.ownDescription);
+            } else if (!forecastCount) {
+                swprintf_s(realDetails[index], text.factEntryFormat, names[1], index + 1,
+                    visibleComparison, positions[1], names[1], counts[1], explanation);
             }
         }
         realBattleAvailable = true;

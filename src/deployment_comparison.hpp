@@ -23,6 +23,27 @@ struct ComparisonStack {
     uint32_t type, quantity, footprint;
     int32_t x, y;
 };
+
+// A copied initial field, shared by the planner and its explanatory UI.
+// Rows retain native coordinates; no actor, process or SDK pointers survive.
+struct PlacementFieldSnapshot {
+    uint32_t version, generation, width, height;
+    uint32_t blockedRows[32];
+};
+
+inline bool CopyPlacementField(const unsigned char* blocked, uint32_t stride,
+    uint32_t width, uint32_t height, uint32_t generation, PlacementFieldSnapshot& result) {
+    result = {};
+    if (!blocked || !generation || width < 8 || width > 32 || height < 4 || height > 32 ||
+        stride < (width + 7) / 8 || stride > 1024 / height) { return false; }
+    result.version = 1; result.generation = generation; result.width = width; result.height = height;
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            if (blocked[y * stride + x / 8] & (1u << (x % 8))) { result.blockedRows[y] |= 1u << x; }
+        }
+    }
+    return true;
+}
 enum class DeploymentDifference : uint32_t {
     Exact, PositionOnlyKnown, Moved, QuantityChanged, Unpredicted, Missing
 };

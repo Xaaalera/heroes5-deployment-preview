@@ -36,7 +36,7 @@ SPEC.loader.exec_module(probe)
 
 class ComparisonTests(unittest.TestCase):
     @staticmethod
-    def player_snapshot_fixture():
+    def player_snapshot_fixture(terrain=False):
         public, reference, actual = bytearray(4544), bytearray(124), bytearray(3024)
         struct.pack_into('<5I', public, 0, 1, 21, 9, 9, 2)
         struct.pack_into('<I', public, 776, 2)
@@ -53,6 +53,11 @@ class ComparisonTests(unittest.TestCase):
             struct.pack_into('<6I4i3I', reference, 20 + index * 52,
                              creature, quantity, 1, index + 1, 2, 0, x, y, 3, 3, 3, 1, 0)
         actual[2192:2192 + len(reference)] = reference
+        if terrain:
+            field = bytearray(144)
+            struct.pack_into('<4I', field, 0, 1, 21, 16, 12)
+            struct.pack_into('<I', field, 16 + 7 * 4, 1 << 6)
+            actual.extend(field)
         return public, reference, actual
 
     def test_managed_snapshots_keep_public_prediction_and_full_reference_separate(self):
@@ -64,6 +69,45 @@ class ComparisonTests(unittest.TestCase):
 
         buffers = fixture()
         result = verifier.compare_player_snapshots(*buffers, 21)
+        self.assertIsNone(result['terrain'])  # Historical records have no terrain proof.
+        terrain_public, terrain_reference, terrain_actual = fixture(terrain=True)
+        terrain_before = bytes(terrain_actual[3024:])
+        terrain_result = verifier.compare_player_snapshots(
+            terrain_public, terrain_reference, terrain_actual, 21, terrain_before)
+        self.assertEqual(terrain_result['terrain']['blocked_cells'], [[6, 7]])
+        self.assertTrue(terrain_result['terrain_before_verified'])
+        # Old facts remain readable, but cannot prove retained before-Start terrain.
+        with self.assertRaisesRegex(ValueError, 'terrain'):
+            verifier.compare_player_snapshots(*buffers, 21, terrain_before)
+        for mutate in ('stale', 'dimensions', 'outside_width', 'outside_height',
+                       'own_overlap', 'large_own_overlap', 'enemy_overlap', 'forecast_overlap', 'changed_after'):
+            public, reference, actual = fixture(terrain=True)
+            field = bytearray(terrain_before)
+            if mutate == 'stale':
+                struct.pack_into('<I', field, 4, 20)
+            elif mutate == 'dimensions':
+                struct.pack_into('<I', field, 8, 20)
+            elif mutate == 'outside_width':
+                struct.pack_into('<I', field, 16 + 7 * 4, 1 << 16)
+            elif mutate == 'outside_height':
+                struct.pack_into('<I', field, 16 + 12 * 4, 1)
+            elif mutate == 'own_overlap':
+                struct.pack_into('<I', field, 16 + 6 * 4, 1 << 2)
+            elif mutate == 'large_own_overlap':
+                struct.pack_into('<4I2i', actual, 1844, 1000, 13, 1, 2, 3, 6)
+                struct.pack_into('<I', field, 16 + 5 * 4, 1 << 2)
+            elif mutate == 'enemy_overlap':
+                struct.pack_into('<I', field, 16 + 4 * 4, 1 << 13)
+            elif mutate == 'forecast_overlap':
+                # Ordinary cells may differ, but still must avoid known obstacles.
+                struct.pack_into('<2i', public, 96, 6, 7)
+                struct.pack_into('<2i', actual, 1664, 6, 7)
+            elif mutate == 'changed_after':
+                field[16 + 7 * 4] = 0
+            if mutate != 'changed_after':
+                actual[3024:] = field
+            with self.subTest(terrain_mutation=mutate), self.assertRaises(ValueError):
+                verifier.compare_player_snapshots(public, reference, actual, 21, bytes(field))
         self.assertTrue(result['position_full_match'])
         self.assertTrue(result['reference_full_match'])
         self.assertEqual([stack['quantity'] for stack in result['prediction']], [0, 0])
@@ -196,7 +240,7 @@ class ComparisonTests(unittest.TestCase):
                                       {'name': family + '_second', 'public_count': 2},
                                       {'name': family + '_solo', 'public_count': 1}]}
                     for family in ('polygon', 'rmg_a', 'rmg_b')}
-        report = {'schema': 2, 'transport': 'managed_owned_session', 'mode': 'normal_public_prediction',
+        report = {'schema': 3, 'transport': 'managed_owned_session', 'mode': 'normal_public_prediction',
                   'owner': owner, 'requested_rounds': 10, 'runs': []}
         evidence = {}
         generation, clock = 21, 100
@@ -210,7 +254,7 @@ class ComparisonTests(unittest.TestCase):
             for pack in fixtures[family]['packs']:
                 generation += 1
                 identity = f'battle-{generation}'
-                public, reference, actual = self.player_snapshot_fixture()
+                public, reference, actual = self.player_snapshot_fixture(terrain=True)
                 if pack['public_count'] == 1:
                     reference = reference[:72]
                     struct.pack_into('<I', reference, 12, 1)
@@ -222,13 +266,15 @@ class ComparisonTests(unittest.TestCase):
                 struct.pack_into('<I', reference, 0, generation)
                 struct.pack_into('<I', actual, 4, generation)
                 struct.pack_into('<I', actual, 1620, generation)
+                struct.pack_into('<I', actual, 3028, generation)
                 actual[2192:2192 + len(reference)] = reference
-                for label, blob in [('public', public), ('reference', reference), ('actual', actual)]:
+                for label, blob in [('public', public), ('reference', reference), ('actual', actual), ('field', actual[3024:])]:
                     evidence[identity + '-' + label] = bytes(blob)
                 battle = {'id': identity, 'owner': owner, 'pack': pack['name'], 'generation': generation,
                           'clock': 'perf_counter_ns', 'before_start_ns': clock + 1, 'start_ns': clock + 2,
                           'after_start_ns': clock + 3, 'public_before': identity + '-public',
                           'reference_before': identity + '-reference', 'committed_after': identity + '-actual',
+                          'field_before': identity + '-field',
                           'explanation': {'status': 'verified_actual_placement', 'scope': 'actual_placement',
                                           'reference_sha256': hashlib.sha256(reference).hexdigest(),
                                           'orders': list(range(1, pack['public_count'] + 1)),
@@ -269,6 +315,16 @@ class ComparisonTests(unittest.TestCase):
                     verifier.verify_player_campaign_data(candidate, fixtures, evidence.__getitem__)
         first_identity = report['runs'][0]['battles'][0]
         original = evidence[first_identity]
+        historical = copy.deepcopy(report)
+        historical['schema'] = 2
+        with self.assertRaises(ValueError):
+            verifier.verify_player_campaign_data(historical, fixtures, evidence.__getitem__)
+        missing_field = json.loads(original)
+        del missing_field['field_before']
+        evidence[first_identity] = json.dumps(missing_field).encode()
+        with self.assertRaisesRegex(ValueError, 'terrain'):
+            verifier.verify_player_campaign_data(report, fixtures, evidence.__getitem__)
+        evidence[first_identity] = original
         for field, value in [('owner', {'pid': 1235, 'created': 999}), ('clock', 'monotonic_ns'),
                              ('generation', 0), ('start_ns', 103), ('explanation', {}),
                              ('explanation', {'status': 'pending_causal_reconstruction'})]:
@@ -468,7 +524,8 @@ class ComparisonTests(unittest.TestCase):
         functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in (
             'write_managed_evidence', 'capture_managed_battle', 'read_managed_evidence')]
         namespace = {'os': os, 'time': time, 'struct': struct, 're': re, 'json': json,
-                     'hashlib': hashlib, 'Path': Path, 'compare_player_snapshots': verifier.compare_player_snapshots}
+                     'hashlib': hashlib, 'Path': Path, 'compare_player_snapshots': verifier.compare_player_snapshots,
+                     'decode_player_field': verifier.decode_player_field}
         exec(compile(ast.Module(body=functions, type_ignores=[]), '<managed-capture>', 'exec'), namespace)
         fixture = self.player_snapshot_fixture
         case = self
@@ -477,14 +534,15 @@ class ComparisonTests(unittest.TestCase):
             owner = {'pid': 1234, 'created': 999}
             public_address, comparison_address = 10000, 20000
 
-            def __init__(self, root, uncertain=False, stale=False, sequence_mode=None):
-                self.public, self.reference, self.actual = fixture()
+            def __init__(self, root, uncertain=False, stale=False, sequence_mode=None, changed_terrain=False):
+                self.public, self.reference, self.actual = fixture(terrain=True)
                 self.before = bytearray(self.actual)
                 struct.pack_into('<8I', self.before, 1616, 1, 0, 0, 0, 0, 0, 0, 0)
                 if stale:
                     struct.pack_into('<I', self.before, 2192, 20)
                 self.started, self.commands, self.root, self.uncertain = False, [], root, uncertain
                 self.sequence_mode, self.sequence_reads = sequence_mode, 0
+                self.changed_terrain = changed_terrain
 
             def read(self, address, length):
                 if address == self.public_address:
@@ -505,11 +563,14 @@ class ComparisonTests(unittest.TestCase):
                     directory = self.root / '1234-999-21'
                     case.assertEqual((directory / 'public-before.bin').read_bytes(), self.public)
                     case.assertEqual((directory / 'reference-before.bin').read_bytes(), self.reference)
+                    case.assertEqual((directory / 'field-before.bin').read_bytes(), self.actual[3024:])
                     events = [json.loads(line) for line in (directory / 'events.jsonl').read_bytes().splitlines()]
                     case.assertEqual([row['stage'] for row in events],
                                      ['capture_started', 'frozen_before_start', 'start_submitted'])
-                    case.assertGreaterEqual(sync.call_count, 5)
+                    case.assertGreaterEqual(sync.call_count, 6)
                     self.started = True
+                    if self.changed_terrain:
+                        self.actual[3024 + 16 + 7 * 4] = 0
                     if self.uncertain:
                         raise TimeoutError('Start dispatch uncertain')
 
@@ -572,13 +633,30 @@ class ComparisonTests(unittest.TestCase):
                 self.assertFalse(comparison['position_full_match'])
                 self.assertTrue(comparison['reference_full_match'])
                 self.assertEqual(session.commands.count('game-event confirm_placement'), 1)
-            failed_disk = root / 'failed-disk'
-            failed_disk.mkdir()
-            session = Session(failed_disk)
-            with patch.object(os, 'fsync', side_effect=[None, None, OSError('Disk flush failed'), None]):
-                with self.assertRaisesRegex(OSError, 'Disk flush failed'):
-                    namespace['capture_managed_battle'](session, failed_disk, 'pack_0', 21)
-            self.assertEqual(session.commands, [], 'Start is forbidden when either initial snapshot was not flushed')
+                for invalid_before in (True, False):
+                    terrain_root = root / ('invalid-terrain' if invalid_before else 'changed-terrain')
+                    terrain_root.mkdir()
+                    session = Session(terrain_root, changed_terrain=not invalid_before)
+                    if invalid_before:
+                        struct.pack_into('<I', session.before, 3024, 0)
+                    with self.assertRaisesRegex(ValueError, 'terrain'):
+                        namespace['capture_managed_battle'](session, terrain_root, 'pack_0', 21)
+                    self.assertEqual(session.commands, [] if invalid_before else ['game-event confirm_placement'])
+                    events = [json.loads(line) for line in (terrain_root / '1234-999-21/events.jsonl').read_bytes().splitlines()]
+                    self.assertEqual(events[-1]['stage'], 'failed')
+            # capture-start journal, public, reference, terrain: reject failure
+            # of either the existing reference or the new fourth terrain flush.
+            for failed_sync in (3, 4):
+                failed_disk = root / f'failed-disk-{failed_sync}'
+                failed_disk.mkdir()
+                session = Session(failed_disk)
+                effects = [None] * (failed_sync - 1) + [OSError('Disk flush failed'), None]
+                with patch.object(os, 'fsync', side_effect=effects):
+                    with self.assertRaisesRegex(OSError, 'Disk flush failed'):
+                        namespace['capture_managed_battle'](session, failed_disk, 'pack_0', 21)
+                self.assertEqual(session.commands, [], 'Start is forbidden when any initial snapshot was not flushed')
+                events = [json.loads(line) for line in (failed_disk / '1234-999-21/events.jsonl').read_bytes().splitlines()]
+                self.assertEqual(events[-1]['stage'], 'failed')
 
     def test_managed_producer_rotates_all_packs_and_publishes_only_verified_reports(self):
         import argparse
@@ -1073,12 +1151,32 @@ class ComparisonTests(unittest.TestCase):
 using namespace h5_preview;
 int main() {
  ComparisonStack neutral{15,50,1,13,4}, own{3,100,1,2,6};
- assert(ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,1,nullptr,nullptr,nullptr,16,12,123));
+ unsigned char nativeTerrain[36]{};
+ nativeTerrain[9*3+11/8] = 1u << (11%8);
+ PlacementFieldSnapshot terrain{};
+ assert(CopyPlacementField(nativeTerrain,3,16,12,123,terrain));
+ assert(terrain.blockedRows[9] == (1u << 11));
+ PlacementFieldSnapshot refused = terrain;
+ assert(!CopyPlacementField(nativeTerrain,1,16,12,123,refused) && refused.version == 0);
+ assert(ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,1,nullptr,nullptr,nullptr,16,12,123,&terrain));
+ wchar_t explanation[1536]{};
+ assert(ComparisonWindow::ReadBattleEntryExplanation(0,explanation,1536) && explanation[0]);
+ assert(!ComparisonWindow::ReadBattleEntryExplanation(99,explanation,1536) && explanation[0] == 0);
+ assert(!ComparisonWindow::ReadBattleEntryExplanation(0,explanation,1) && explanation[0] == 0);
  const auto originalSurvives = [] {
   int columns=0, rows=0; uint32_t battleId=0;
   ComparisonWindow::ReadBattleGeometry(columns,rows,battleId);
   assert(columns==12 && rows==10 && battleId==123 && ComparisonWindow::HasBattle());
+  PlacementFieldSnapshot captured{};
+  assert(ComparisonWindow::ReadBattleField(captured) && captured.generation==123 && captured.blockedRows[9]==(1u<<11));
  };
+ originalSurvives();
+ PlacementFieldSnapshot wrongField = terrain;
+ wrongField.generation = 124;
+ assert(!ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,1,nullptr,nullptr,nullptr,16,12,123,&wrongField));
+ originalSurvives();
+ wrongField = terrain; wrongField.blockedRows[12] = 1;
+ assert(!ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,1,nullptr,nullptr,nullptr,16,12,123,&wrongField));
  originalSurvives();
  assert(!ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,0,nullptr,nullptr,nullptr,20,14,456));
  originalSurvives();
@@ -1098,6 +1196,29 @@ int main() {
  int columns=0, rows=0; uint32_t battleId=0;
  ComparisonWindow::ReadBattleGeometry(columns,rows,battleId);
  assert(columns==16 && rows==12 && battleId==456);
+ PlacementFieldSnapshot unknown = terrain;
+ assert(!ComparisonWindow::ReadBattleField(unknown));
+ assert(!unknown.version && !unknown.generation && !unknown.blockedRows[9]);
+ // The displayed preferred rows come from a cyclic native window, not its
+ // length alone. The explanation must keep actual quantities distinct.
+ neutral.type=3;
+ PlacementDecisionTrace trace{1,77,1,1,{}};
+ trace.records[0]={3,50,1,1,1,1,13,4,8,3,PlacementDecisionRule::RankedRow,1,0};
+ assert(ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,1,&trace,nullptr,nullptr,16,12,123,&terrain));
+ assert(ComparisonWindow::ReadBattleEntryExplanation(0,explanation,1536));
+ assert(wcsstr(explanation,L"4, 9, 10"));
+ assert(wcsstr(explanation,L"\u0427\u0438\u0441\u043b\u0435\u043d\u043d\u043e\u0441\u0442\u044c"));
+ assert(wcsstr(explanation,L"\u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043d\u043e\u043c\u0443"));
+ // No forecast still shows facts and the supported reconstructed rationale.
+ assert(ComparisonWindow::SetBattle(nullptr,0,&neutral,1,&own,1,&trace,nullptr,nullptr,16,12,123,&terrain));
+ assert(ComparisonWindow::ReadBattleEntryExplanation(0,explanation,1536));
+ assert(wcsstr(explanation,L"4, 9, 10"));
+ // A reference that fails the actual tuple check must not explain that cell
+ // using its recorded rule or preferred rows.
+ trace.records[0].y=5;
+ assert(ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,1,&trace,nullptr,nullptr,16,12,123,&terrain));
+ assert(ComparisonWindow::ReadBattleEntryExplanation(0,explanation,1536));
+ assert(!wcsstr(explanation,L"4, 9, 10"));
  ComparisonWindow::Close();
 }
 '''
@@ -1426,6 +1547,13 @@ void __stdcall ReferenceRendererBoundary(uint32_t,uint32_t,uint32_t,uint32_t) {
     memset(g_outputStorage,0x5a,sizeof(g_outputStorage));
     auto& trace=*reinterpret_cast<h5_preview::PlacementDecisionTrace*>(g_outputStorage+8+976);
     trace={};trace.version=1;trace.placementGeneration=g_placementGeneration;trace.count=1;trace.complete=1;
+    auto* output=g_outputStorage+8;
+    *reinterpret_cast<uint32_t*>(output+384)=16;
+    *reinterpret_cast<uint32_t*>(output+388)=12;
+    *reinterpret_cast<uint32_t*>(output+524)=3;
+    memset(output+1536,0,1024);memset(output+2560,0,1024);
+    output[2560+9*3+11/8]=1u<<(11%8); // Original obstacle.
+    output[1536+9*3+12/8]=1u<<(12%8); // Working occupancy, never terrain.
     if(failReferenceRenderer) RaiseException(0xe0001234,0,0,nullptr);
 }
 int main() {
@@ -1645,7 +1773,17 @@ int main() {
     assert(g_renderedGeneration==g_placementGeneration && !g_plannedProjectionCount);
     for(unsigned failure=0;failure<2;++failure) {
         failReferenceRenderer=failure!=0;h5_preview::PlacementDecisionTrace decisions{};
-        assert(PlanReferencePlacement(referenceInputs,0x1234,1,2,3,decisions)==!failReferenceRenderer);
+        h5_preview::PlacementFieldSnapshot field{};field.version=99;
+        unsigned char publicBefore[sizeof(g_outputStorage)]{};
+        memcpy(publicBefore,g_outputStorage,sizeof(publicBefore));
+        assert(PlanReferencePlacement(referenceInputs,0x1234,1,2,3,decisions,&field)==!failReferenceRenderer);
+        assert(!memcmp(publicBefore,g_outputStorage,sizeof(publicBefore)));
+        if(failReferenceRenderer) { assert(field.version==0 && !field.generation && !field.blockedRows[9]); }
+        else {
+            assert(field.version==1 && field.generation==static_cast<uint32_t>(g_attackGeneration));
+            assert(field.width==16 && field.height==12 && field.blockedRows[9]==(1u<<11));
+            assert(!(field.blockedRows[9] & (1u<<12)));
+        }
         assert(!g_superadminEnabled && !g_referenceCalculationActive && g_actorInputCount==0);
         assert(g_publicCount==1 && g_publicTypes[0]==3 && g_publicBands[0]==5);
         assert(g_cell[0]==13 && g_position[0]==12 && g_knownHeroAttack==0);

@@ -17,7 +17,7 @@ import time
 import uuid
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 import xml.etree.ElementTree as ET
-from check import source_fingerprints, verify_source_fingerprints, verify_player_campaign_data, compare_player_snapshots
+from check import source_fingerprints, verify_source_fingerprints, verify_player_campaign_data, compare_player_snapshots, decode_player_field
 
 MOD = Path(__file__).resolve().parents[1]
 os.environ.setdefault('H5_WORKSPACE', str(MOD.parents[1]))
@@ -2455,7 +2455,7 @@ def capture_managed_battle(session, directory, pack, generation, timeout=8):
             while True:
                 before = session.read(session.comparison_address + 28, 4)
                 public = session.read(session.public_address, 1280)
-                context = session.read(session.comparison_address, 3024)
+                context = session.read(session.comparison_address, 3168)
                 after = session.read(session.comparison_address + 28, 4)
                 if time.perf_counter() >= deadline:
                     raise TimeoutError('Managed capture pending; submitted actions are not replayed')
@@ -2478,21 +2478,25 @@ def capture_managed_battle(session, directory, pack, generation, timeout=8):
             append({'stage': 'capture_started', 'time_ns': time.perf_counter_ns(),
                     'owner': battle['owner'], 'generation': generation, 'pack': pack})
             public, context = snapshot(False)
+            field = context[3024:]
+            decode_player_field(field, generation)
             count = struct.unpack_from('<I', context, 2204)[0]
             reference = context[2192:2212 + count * 52]
             battle['public_before'] = write_managed_evidence(battle_directory / 'public-before.bin', public, directory)
             battle['reference_before'] = write_managed_evidence(battle_directory / 'reference-before.bin', reference, directory)
+            battle['field_before'] = write_managed_evidence(battle_directory / 'field-before.bin', field, directory)
             battle['before_start_ns'] = time.perf_counter_ns()
             append({'stage': 'frozen_before_start', 'time_ns': battle['before_start_ns'],
-                    'public_before': battle['public_before'], 'reference_before': battle['reference_before']})
-            # No Start before both exclusive files and the journal are flushed.
+                    'public_before': battle['public_before'], 'reference_before': battle['reference_before'],
+                    'field_before': battle['field_before']})
+            # No Start before all three exclusive files and the journal are flushed.
             battle['start_ns'] = time.perf_counter_ns()
             append({'stage': 'start_submitted', 'time_ns': battle['start_ns']})
             session.command('game-event confirm_placement', timeout=timeout)
             _, actual = snapshot(True)
             battle['after_start_ns'] = time.perf_counter_ns()
             battle['committed_after'] = write_managed_evidence(battle_directory / 'committed-after.bin', actual, directory)
-            comparison = compare_player_snapshots(public, reference, actual, generation)
+            comparison = compare_player_snapshots(public, reference, actual, generation, field)
             if not comparison['reference_full_match']:
                 raise ValueError('Full placement reference differs from initial facts; evidence retained')
             battle['explanation'] = {'status': 'verified_actual_placement', 'scope': 'actual_placement',
@@ -2586,7 +2590,7 @@ def run_managed_campaign(session_path):
     configuration = json.loads(session_path.read_text(encoding='utf-8'))
     check.ROOT = Path(configuration['workspace']).resolve()
     report = {**configuration['report'], **source_fingerprints(),
-              'schema': 2, 'transport': 'managed_owned_session', 'mode': 'normal_public_prediction',
+              'schema': 3, 'transport': 'managed_owned_session', 'mode': 'normal_public_prediction',
               'owner': dict(configuration['owner']), 'requested_rounds': 10, 'runs': [],
               'helper_sha256': managed_helper_fingerprints(),
               'game_exe_sha256': sha256(check.ROOT / '.local/test-game/bin/H5_Game.exe')}

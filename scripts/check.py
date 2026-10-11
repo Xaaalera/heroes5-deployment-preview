@@ -11,15 +11,35 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def compare_player_snapshots(public_before, reference_before, committed_after, generation):
+def decode_player_field(data, generation):
+    """Decode the copied native terrain; retain native coordinates and borders."""
+    if len(data) != 144:
+        raise ValueError('Incomplete frozen terrain snapshot')
+    version, attack, width, height, *rows = struct.unpack('<36I', data)
+    if (version != 1 or attack != generation or generation <= 0 or
+            not 8 <= width <= 32 or not 4 <= height <= 32):
+        raise ValueError('Frozen terrain belongs to another attack or invalid field')
+    allowed = (1 << width) - 1
+    if any(mask & ~allowed or (row >= height and mask) for row, mask in enumerate(rows)):
+        raise ValueError('Frozen terrain contains cells outside the native field')
+    return {'width': width, 'height': height, 'blocked_cells': [
+        [column, row] for row in range(1, height - 1) for column in range(2, width - 2)
+        if rows[row] & (1 << column)]}
+
+
+def compare_player_snapshots(public_before, reference_before, committed_after, generation, field_before=None):
     """Validate managed capture contents, not ownership or capture-time ordering.
 
     The producer must preserve both before buffers before its single Start.
     The release verifier must additionally bind them to the owned session,
     final package, source manifests, map loads and durable battle records.
     """
-    if generation <= 0 or len(public_before) < 1172 or len(committed_after) != 3024:
+    if generation <= 0 or len(public_before) < 1172 or len(committed_after) not in (3024, 3168):
         raise ValueError('Incomplete player snapshot or invalid attack generation')
+    # Historical 3024-byte records remain decodable, but cannot satisfy the
+    # current campaign gate, which always supplies durable before-Start terrain.
+    if field_before is not None and (len(committed_after) != 3168 or committed_after[3024:] != field_before):
+        raise ValueError('Frozen terrain is missing or changed after Start')
     public_version, attack, placement, rendered, _ = struct.unpack_from('<5I', public_before)
     if public_version != 1 or attack != generation:
         raise ValueError('Public prediction belongs to another attack')
@@ -95,9 +115,20 @@ def compare_player_snapshots(public_before, reference_before, committed_after, g
     predicted_cells, actual_cells = occupied_cells(forecast), occupied_cells(actual)
     if any(count != 1 for count in occupied_cells(own + actual).values()):
         raise ValueError('Initial army footprints overlap')
+    terrain = None
+    if len(committed_after) == 3168:
+        terrain = decode_player_field(committed_after[3024:], generation)
+        if (terrain['width'], terrain['height']) != (width, height):
+            raise ValueError('Frozen terrain dimensions differ from the committed field')
+        blocked = set(map(tuple, terrain['blocked_cells']))
+        if blocked.intersection(occupied_cells(own + actual)):
+            raise ValueError('Initial army footprint overlaps a terrain obstacle')
+        if blocked.intersection(predicted_cells):
+            raise ValueError('Public forecast footprint overlaps a terrain obstacle')
     predicted_positions = Counter((*stack['cell'], stack['footprint']) for stack in forecast)
     actual_positions = Counter((*stack['cell'], stack['footprint']) for stack in actual)
-    return {'prediction': forecast, 'observed': actual, 'own': own,
+    return {'prediction': forecast, 'observed': actual, 'own': own, 'terrain': terrain,
+            'terrain_before_verified': field_before is not None,
             'position_full_match': (forecast_count == enemy_count and predicted_cells == actual_cells and
                                     predicted_positions == actual_positions),
             'reference_full_match': True, 'reference_decisions': [list(row) for row in decisions],
@@ -106,7 +137,7 @@ def compare_player_snapshots(public_before, reference_before, committed_after, g
 
 def verify_player_campaign_data(report, fixtures, read_evidence):
     """Verify complete managed rounds; file/package provenance belongs to caller."""
-    if (report.get('schema') != 2 or report.get('transport') != 'managed_owned_session' or
+    if (report.get('schema') != 3 or report.get('transport') != 'managed_owned_session' or
             report.get('mode') != 'normal_public_prediction' or report.get('error') or
             report.get('requested_rounds') != 10 or set(fixtures) != {'polygon', 'rmg_a', 'rmg_b'}):
         raise ValueError('Expected a completed normal managed ten-load campaign')
@@ -159,8 +190,13 @@ def verify_player_campaign_data(report, fixtures, read_evidence):
                     returned.get('generation') != generation or returned.get('time_ns', 0) <= after):
                 raise ValueError('Battle provenance, timing or adventure return is invalid')
             reference_before = read_evidence(battle['reference_before'])
+            if not battle.get('field_before'):
+                raise ValueError('Battle lacks frozen terrain saved before Start')
             comparison = compare_player_snapshots(read_evidence(battle['public_before']),
-                reference_before, read_evidence(battle['committed_after']), generation)
+                reference_before, read_evidence(battle['committed_after']), generation,
+                read_evidence(battle['field_before']))
+            if not comparison['terrain_before_verified']:
+                raise ValueError('Battle terrain was not verified against its before-Start snapshot')
             explanation = battle.get('explanation', {})
             if (explanation.get('status') != 'verified_actual_placement' or
                     explanation.get('scope') != 'actual_placement' or

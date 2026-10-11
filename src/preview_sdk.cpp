@@ -187,6 +187,7 @@ struct PostStartVerification {
     uint32_t referenceAttackGeneration;
     h5_preview::PlacementDecisionTrace referenceTrace;
     wchar_t playerQuantityLabels[7][32];
+    h5_preview::PlacementFieldSnapshot playerField;
     void Reset() {
         InterlockedIncrement(&sequence);
         version = 2;generation = armed = positionCount = quantityCount = failures = overflow = 0;
@@ -198,6 +199,7 @@ struct PostStartVerification {
         memset(playerOracleCountsAtCapture, 0, sizeof(playerOracleCountsAtCapture));
         referenceAttackGeneration = 0; referenceTrace = {};
         memset(playerQuantityLabels, 0, sizeof(playerQuantityLabels));
+        playerField = {};
         InterlockedIncrement(&sequence);
     }
 };
@@ -205,6 +207,8 @@ static_assert(PolicyVerificationOffset + sizeof(PolicyVerification) <= PostStart
 static_assert(PostStartVerificationOffset + sizeof(PostStartVerification) <= PublicProjectionOffset);
 static_assert(offsetof(PostStartVerification, playerVersion) == 1616);
 static_assert(offsetof(PostStartVerification, playerActual) == 1816);
+static_assert(offsetof(PostStartVerification, playerField) == 3024);
+static_assert(sizeof(PostStartVerification) == 3168);
 
 bool RestorePlayerComparisonUI(const PostStartVerification& state, HWND window) {
     if (state.playerVersion != 1 || !state.playerFrozen || state.playerCommitted != 1 ||
@@ -222,7 +226,8 @@ bool RestorePlayerComparisonUI(const PostStartVerification& state, HWND window) 
         actual, state.playerActual.counts[1], own, state.playerActual.counts[0],
         state.referenceAttackGeneration == state.playerGeneration ? &state.referenceTrace : nullptr,
         state.playerQuantityLabels, h5::army::ReadCreatureDisplayName,
-        state.playerWidth, state.playerHeight, state.playerGeneration)) { return false; }
+        state.playerWidth, state.playerHeight, state.playerGeneration,
+        state.playerField.version == 1 ? &state.playerField : nullptr)) { return false; }
     h5_preview::ComparisonWindow::ShowLauncher(window);
     return true;
 }
@@ -626,12 +631,14 @@ void UpdatePublicProjections(uint32_t command, const heroes5_sdk::EngineContext&
                 (verification.referenceAttackGeneration != static_cast<uint32_t>(g_attackGeneration) ||
                  verification.referenceTrace.placementGeneration != static_cast<uint32_t>(g_placementGeneration))) {
                 h5_preview::PlacementDecisionTrace decisions{};
+                h5_preview::PlacementFieldSnapshot field{};
                 const bool complete = PlanReferencePlacement(state.research, context.registers.edi,
-                    arguments[5], arguments[9], arguments[7], decisions);
+                    arguments[5], arguments[9], arguments[7], decisions, &field);
                 InterlockedIncrement(&verification.sequence);
                 verification.referenceAttackGeneration = g_attackGeneration;
                 verification.referenceTrace = complete ? decisions : h5_preview::PlacementDecisionTrace{};
                 verification.referenceTrace.placementGeneration = g_placementGeneration;
+                verification.playerField = complete ? field : h5_preview::PlacementFieldSnapshot{};
                 InterlockedIncrement(&verification.sequence);
                 state.research.actorInputsFrozen = true;
             }
@@ -971,6 +978,11 @@ uint32_t __cdecl DispatchPreview(uint32_t command, uint32_t argument,
                 decisions.placementGeneration == static_cast<uint32_t>(projections.placementGeneration)) {
                 postStart.referenceAttackGeneration = postStart.playerGeneration;
                 postStart.referenceTrace = decisions;
+                if (postStart.playerField.version != 1 || postStart.playerField.generation != postStart.playerGeneration) {
+                    const auto* output = projections.models + 8;
+                    h5_preview::CopyPlacementField(output + 2560, planned[524 / 4], planned[384 / 4],
+                        planned[388 / 4], postStart.playerGeneration, postStart.playerField);
+                }
             } else if (postStart.referenceAttackGeneration != postStart.playerGeneration) {
                 postStart.referenceAttackGeneration = 0; postStart.referenceTrace = {};
             }
