@@ -16,6 +16,7 @@ import shutil
 import time
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 import xml.etree.ElementTree as ET
+from check import source_fingerprints, verify_source_fingerprints
 
 MOD = Path(__file__).resolve().parents[1]
 os.environ.setdefault('H5_WORKSPACE', str(MOD.parents[1]))
@@ -2243,6 +2244,7 @@ def run_map(round_number, fixture, report, destination, creature_names, backgrou
 
 def verify_report(path):
     report = json.loads(path.read_text(encoding='utf-8'))
+    verify_source_fingerprints(report)
     if report.get('mode') != 'normal_public_prediction':
         raise RuntimeError('Only a normal public-input campaign can pass the player pre-push gate')
     if check.DEVKIT != (MOD / 'devkit').resolve():
@@ -2415,6 +2417,7 @@ def main():
               'fixtures': fixtures, 'game_exe_sha256': sha256(game),
               'creature_families': {str(kind): base for kind, base in families.items()},
               'creature_sources': creature_sources,
+              **source_fingerprints(),
               'plugin_sha256': sha256(check.PLUGIN), 'source_sha256': sha256(source),
               'loader_sha256': sha256(check.LOADER),
               'devkit_probe_sha256': sha256(check.PROBE),

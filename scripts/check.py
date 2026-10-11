@@ -7,6 +7,27 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def source_fingerprints():
+    """Use xkit's build input graph, including the adapter and shared runtime."""
+    import importlib.util
+    import tempfile
+    sdk = ROOT / 'devkit'
+    sys.path.insert(0, str(sdk / 'scripts'))
+    from plugin_core import core_source_snapshot
+    specification = importlib.util.spec_from_file_location('accuracy_source_watch', sdk / 'scripts/plugin-watch.py')
+    watcher_module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(watcher_module)
+    with tempfile.TemporaryDirectory(prefix='h5-source-check-') as output:
+        watcher = watcher_module.PluginWatch(ROOT, Path(output), None, {}, None)
+        return {'source_hashes': watcher.snapshot(), 'core_source_hashes': core_source_snapshot(sdk / 'native')}
+
+
+def verify_source_fingerprints(report):
+    for name, expected in source_fingerprints().items():
+        if report.get(name) != expected:
+            raise ValueError('Historical or stale evidence cannot certify current sources: ' + name)
+
+
 def verify_policy_decisions(report):
     """Compare original decisions by source army and observed evaluation lifetime."""
     if (report['generation'] != report['strategy_generation'] or report['failures'] or report['overflow']
@@ -113,6 +134,8 @@ def verify_admin_data(report, expected_packs):
 
 
 def verify_admin_report(path):
+    report = json.loads(path.read_text(encoding='utf-8'))
+    verify_source_fingerprints(report)
     import hashlib
     import importlib.util
     import os
@@ -124,7 +147,6 @@ def verify_admin_report(path):
     specification = importlib.util.spec_from_file_location('verification_context', ROOT / 'scripts/native-preview-check.py')
     context = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(context)
-    report = json.loads(path.read_text(encoding='utf-8'))
     files = {'source_sha256': ROOT / 'src/preview_plugin.cpp', 'driver_sha256': ROOT / 'scripts/accuracy-campaign.py',
              'native_check_sha256': Path(context.__file__),
              'plugin_sha256': context.ROOT / '.local/test-game/bin/Heroes5Mods/WorkshopDeploymentPreview.dll',

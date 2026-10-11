@@ -1645,6 +1645,46 @@ int wmain(int count, wchar_t** arguments) {
             else:broken['acceptance']['full_matches']=19
             with self.subTest(mutation=mutation),self.assertRaises(ValueError):verifier.verify_admin_data(broken,packs)
 
+    def test_accuracy_source_gate_binds_extracted_formulas_adapter_and_dependencies(self):
+        import ast
+        import copy
+        import tempfile
+        from unittest.mock import patch
+        specification = importlib.util.spec_from_file_location('complete_source_verifier', MOD_ROOT / 'scripts/check.py')
+        verifier = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(verifier)
+        report = verifier.source_fingerprints()
+        required = {str(Path('src/placement_calculations.hpp')), str(Path('src/preview_sdk.cpp')),
+                    '@watch/src/preview_plugin.cpp', '@game-api/h5/actor_input.hpp'}
+        self.assertTrue(required.issubset(report['source_hashes']))
+        self.assertIn('plugin_bridge.cpp', report['core_source_hashes'])
+        self.assertIn('player_plugin.cmake', report['core_source_hashes'])
+        verifier.verify_source_fingerprints(report)
+        normal_source = (MOD_ROOT / 'scripts/accuracy-campaign.py').read_text(encoding='utf-8')
+        normal_reader = next(node for node in ast.parse(normal_source).body
+                             if isinstance(node, ast.FunctionDef) and node.name == 'verify_report')
+        namespace = {'json': json, 'verify_source_fingerprints': verifier.verify_source_fingerprints}
+        exec(compile(ast.Module(body=[normal_reader], type_ignores=[]), '<normal-source-gate>', 'exec'), namespace)
+        with patch.object(verifier, 'source_fingerprints', return_value=report), tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.json'
+            for group, name in [('source_hashes', name) for name in sorted(required)] + [
+                    ('core_source_hashes', 'plugin_bridge.cpp'), ('core_source_hashes', 'player_plugin.cmake')]:
+                for mutation in ('changed', 'missing'):
+                    broken = copy.deepcopy(report)
+                    if mutation == 'changed':
+                        broken[group][name] = '0' * 64
+                    else:
+                        del broken[group][name]
+                    path.write_text(json.dumps(broken), encoding='utf-8')
+                    for read_report in (verifier.verify_admin_report, namespace['verify_report']):
+                        with self.subTest(group=group, name=name, mutation=mutation, reader=read_report.__name__):
+                            with self.assertRaisesRegex(ValueError, 'Historical or stale evidence'):
+                                read_report(path)
+            path.write_text('{}', encoding='utf-8')
+            for read_report in (verifier.verify_admin_report, namespace['verify_report']):
+                with self.assertRaisesRegex(ValueError, 'Historical or stale evidence'):
+                    read_report(path)
+
     def test_accuracy_report_atomic_save_retries_windows_locks_without_losing_old_evidence(self):
         import ast
         from types import SimpleNamespace
