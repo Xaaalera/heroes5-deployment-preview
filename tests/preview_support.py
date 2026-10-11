@@ -9,7 +9,7 @@ if ((MOD_ROOT.parents[1] / 'scripts/sync-subrepos.ps1').is_file()
         and DEVKIT != (MOD_ROOT.parents[1] / 'devkit').resolve()):
     raise RuntimeError('Workshop requires the single canonical devkit; run scripts/sync-subrepos.ps1')
 if not (DEVKIT / 'scripts/workspace.py').is_file():
-    raise RuntimeError('Initialize the pinned devkit: git submodule update --init --recursive')
+    raise RuntimeError('Initialize pinned dependencies: git submodule update --init. Then follow README.md to link the shared Game API checkout.')
 sys.path.insert(0, str(DEVKIT / 'scripts'))
 WORKSPACE = Path(os.environ.get('H5_WORKSPACE') or MOD_ROOT).expanduser().resolve()
 BUILD = Path(os.environ.get('H5_PREVIEW_BUILD') or MOD_ROOT / '.local/build/deployment-preview-native').resolve()
