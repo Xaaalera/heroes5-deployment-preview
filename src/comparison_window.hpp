@@ -46,7 +46,7 @@ class ComparisonWindow {
         const wchar_t* ownArmy = L"\u0417\u0415\u041b\u0401\u041d\u042b\u0419 \u2014 \u0430\u0440\u043c\u0438\u044f \u0433\u0435\u0440\u043e\u044f";
         const wchar_t* realBattle = L"\u041f\u0440\u043e\u0433\u043d\u043e\u0437 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d \u0434\u043e \u043d\u0430\u0447\u0430\u043b\u0430 \u0431\u043e\u044f; \u0441\u043f\u0440\u0430\u0432\u0430 \u2014 \u043d\u0430\u0447\u0430\u043b\u044c\u043d\u0430\u044f \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430.";
         const wchar_t* realTitle = L"\u041f\u0440\u0435\u0434\u0438\u043a\u0442\u043e\u0440 \u2014 \u0440\u0430\u0437\u0431\u043e\u0440 \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0438";
-        const wchar_t* button = L"\u0420\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430";
+        const wchar_t* button = L"\u0420\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430 \u0432\u043e\u0439\u0441\u043a";
         const wchar_t* ownDescription = L"\u0410\u0440\u043c\u0438\u044f \u0433\u0435\u0440\u043e\u044f. \u041f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u043d\u0430\u0447\u0430\u043b\u044c\u043d\u044b\u0435 \u043f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u0435 \u0438 \u0447\u0438\u0441\u043b\u0435\u043d\u043d\u043e\u0441\u0442\u044c.";
         const wchar_t* terrainHint = L"\u0412 \u043a\u043b\u0435\u0442\u043a\u0435 \u2014 \u043d\u043e\u043c\u0435\u0440 \u043e\u0442\u0440\u044f\u0434\u0430. \u0428\u0442\u0440\u0438\u0445\u043e\u0432\u043a\u0430 \u2014 \u043f\u0440\u0435\u043f\u044f\u0442\u0441\u0442\u0432\u0438\u044f.";
         const wchar_t* noTerrainHint = L"\u0412 \u043a\u043b\u0435\u0442\u043a\u0435 \u2014 \u043d\u043e\u043c\u0435\u0440 \u043e\u0442\u0440\u044f\u0434\u0430. \u041f\u0440\u0435\u043f\u044f\u0442\u0441\u0442\u0432\u0438\u044f \u043d\u0435 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u044b.";
@@ -91,7 +91,6 @@ class ComparisonWindow {
     inline static RECT closeButton{};
     inline static int cellSize = 24;
     inline static uint32_t currentBattleId = 0;
-    inline static int lastOwnerWidth = 0;
     inline static constexpr const wchar_t* layoutProperties[5] = {
         L"H5DeploymentComparison.Left.v1", L"H5DeploymentComparison.Top.v1",
         L"H5DeploymentComparison.Width.v1", L"H5DeploymentComparison.Height.v1",
@@ -654,25 +653,33 @@ public:
     static bool ShowLauncher(HWND owner) {
         if (!realBattleAvailable || !owner || !Register()) { return false; }
         if (!launcher) {
-            RECT area{}; GetClientRect(owner, &area);
             SetWindowLongPtrW(owner, GWL_STYLE, GetWindowLongPtrW(owner, GWL_STYLE) | WS_CLIPCHILDREN);
             launcher = CreateWindowExW(0, L"H5DeploymentComparison", text.button, WS_CHILD | WS_CLIPSIBLINGS,
-                (area.right - 230) / 2, 68, 230, 36, owner, nullptr, instance, nullptr);
+                0, 0, 230, 36, owner, nullptr, instance, nullptr);
         }
         if (!launcher) { return false; }
+        RefreshOwnerLayout(owner);
         if (!h5::ui::RegisterInputPanel(launcher)) { DestroyWindow(launcher); return false; }
         ShowWindow(launcher, SW_SHOW); BringWindowToTop(launcher);
         InvalidateRect(launcher, nullptr, FALSE);
-        RefreshOwnerLayout(owner);
         if (!window && currentBattleId && reinterpret_cast<uintptr_t>(GetPropW(owner,
             L"H5DeploymentComparison.OpenBattle.v1")) == currentBattleId) { ShowBattle(); }
         return true;
     }
     static void RefreshOwnerLayout(HWND owner) {
         if (!launcher || !owner || GetParent(launcher) != owner) { return; }
-        RECT area{}; if (!GetClientRect(owner, &area) || area.right == lastOwnerWidth) { return; }
-        lastOwnerWidth = area.right;
-        SetWindowPos(launcher, nullptr, (std::max)(0L, (area.right - 230) / 2), 68, 230, 36,
+        RECT area{}, previous{};
+        if (!GetClientRect(owner, &area) || !GetWindowRect(launcher, &previous)) { return; }
+        MapWindowPoints(nullptr, owner, reinterpret_cast<POINT*>(&previous), 2);
+        // Universe CombatArena-Heavy/ATBBar: bottom alignment, y=-9,
+        // shared height=162, horizontal margins=21/284. Leave an 8px gap.
+        // This follows the default resource layout; custom HUD scaling still
+        // requires live acceptance against the actual game UI bounds.
+        const LONG left = (std::max)(0L, (area.right + 21 - 284 - 230) / 2);
+        const LONG top = (std::max)(0L, area.bottom - 9 - 162 - 8 - 36);
+        const RECT placement{left, top, left + 230, top + 36};
+        if (EqualRect(&previous, &placement)) { return; }
+        SetWindowPos(launcher, nullptr, left, top, 230, 36,
             SWP_NOACTIVATE | SWP_NOZORDER);
     }
     static bool Show() {
