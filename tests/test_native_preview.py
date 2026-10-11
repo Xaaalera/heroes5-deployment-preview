@@ -35,6 +35,1036 @@ SPEC.loader.exec_module(probe)
 
 
 class ComparisonTests(unittest.TestCase):
+    @staticmethod
+    def player_snapshot_fixture():
+        public, reference, actual = bytearray(4544), bytearray(124), bytearray(3024)
+        struct.pack_into('<5I', public, 0, 1, 21, 9, 9, 2)
+        struct.pack_into('<I', public, 776, 2)
+        struct.pack_into('<8I', actual, 0, 2, 21, 0, 0, 0, 0, 0, 2)
+        struct.pack_into('<8I', actual, 1616, 1, 21, 1, 2, 16, 12, 1, 0)
+        struct.pack_into('<7I', actual, 1816, 100, 200, 300, 1, 2, 0, 0)
+        struct.pack_into('<4I2i', actual, 1844, 1000, 3, 100, 1, 2, 6)
+        struct.pack_into('<5I', reference, 0, 21, 1, 9, 2, 1)
+        for index, (creature, quantity, x, y) in enumerate([(15, 50, 13, 4), (1, 40, 12, 6)]):
+            struct.pack_into('<I', public, 920 + index * 4, creature)
+            struct.pack_into('<2i', public, 96 + index * 8, x, y)
+            struct.pack_into('<4I2i', actual, 1648 + index * 24, 0, creature, 0, 1, x, y)
+            struct.pack_into('<4I2i', actual, 2012 + index * 24, 1001 + index, creature, quantity, 1, x, y)
+            struct.pack_into('<6I4i3I', reference, 20 + index * 52,
+                             creature, quantity, 1, index + 1, 2, 0, x, y, 3, 3, 3, 1, 0)
+        actual[2192:2192 + len(reference)] = reference
+        return public, reference, actual
+
+    def test_managed_snapshots_keep_public_prediction_and_full_reference_separate(self):
+        specification = importlib.util.spec_from_file_location('player_snapshot_check', MOD_ROOT / 'scripts/check.py')
+        verifier = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(verifier)
+
+        fixture = self.player_snapshot_fixture
+
+        buffers = fixture()
+        result = verifier.compare_player_snapshots(*buffers, 21)
+        self.assertTrue(result['position_full_match'])
+        self.assertTrue(result['reference_full_match'])
+        self.assertEqual([stack['quantity'] for stack in result['prediction']], [0, 0])
+        self.assertEqual([stack['quantity'] for stack in result['observed']], [50, 40])
+        public, reference, actual = fixture()
+        struct.pack_into('<I', public, 920, 16)
+        struct.pack_into('<I', actual, 1652, 16)
+        self.assertTrue(verifier.compare_player_snapshots(public, reference, actual, 21)['position_full_match'])
+        public, reference, actual = fixture()
+        struct.pack_into('<2i', public, 96, 12, 4)
+        struct.pack_into('<2i', actual, 1664, 12, 4)
+        result = verifier.compare_player_snapshots(public, reference, actual, 21)
+        self.assertFalse(result['position_full_match'])
+        self.assertTrue(result['reference_full_match'])
+        self.assertEqual(result['actual_only'], [(13, 4)])
+        # A footprint change cannot hide behind an equal anchor and stack count.
+        public, reference, actual = fixture()
+        struct.pack_into('<I', actual, 1660, 2)
+        self.assertFalse(verifier.compare_player_snapshots(public, reference, actual, 21)['position_full_match'])
+        # An unavailable public forecast is retained as a miss, never filled from the full reference.
+        public, reference, actual = fixture()
+        struct.pack_into('<I', public, 776, 0)
+        struct.pack_into('<I', actual, 1628, 0)
+        result = verifier.compare_player_snapshots(public, reference, actual, 21)
+        self.assertEqual(result['prediction'], [])
+        self.assertFalse(result['position_full_match'])
+        for placement, rendered, model_count in [(9, 8, 2), (0, 0, 0), (9, 9, 8)]:
+            with self.subTest(unavailable=(placement, rendered, model_count)):
+                public, reference, actual = fixture()
+                struct.pack_into('<2I', public, 8, placement, rendered)
+                struct.pack_into('<I', public, 776, model_count)
+                struct.pack_into('<I', actual, 1628, 0)
+                result = verifier.compare_player_snapshots(public, reference, actual, 21)
+                self.assertEqual(result['prediction'], [])
+                self.assertFalse(result['position_full_match'])
+                self.assertTrue(result['reference_full_match'])
+        public, reference, actual = fixture()
+        reference[20:72], reference[72:124] = reference[72:124], reference[20:72]
+        actual[2192:2192 + len(reference)] = reference
+        with self.assertRaises(ValueError):
+            verifier.compare_player_snapshots(public, reference, actual, 21)
+        for label, actual_offset, reference_offset, value in [
+                ('out-of-range creature', 2016, 20, 1025),
+                ('out-of-range quantity', 2020, 24, 0x80000000)]:
+            with self.subTest(invalid_native_scalar=label):
+                public, reference, actual = fixture()
+                struct.pack_into('<I', actual, actual_offset, value)
+                struct.pack_into('<I', reference, reference_offset, value)
+                actual[2192:2192 + len(reference)] = reference
+                with self.assertRaises(ValueError):
+                    verifier.compare_player_snapshots(public, reference, actual, 21)
+        # Equal occupied cells and stack count can still conceal swapped large
+        # and small stacks. Individual anchors/footprints must also match.
+        public, _, actual = fixture()
+        reference = bytearray(20 + 5 * 52)
+        struct.pack_into('<I', public, 16, 5)
+        struct.pack_into('<I', public, 776, 5)
+        struct.pack_into('<I', actual, 1628, 5)
+        struct.pack_into('<I', actual, 1832, 5)
+        struct.pack_into('<5I', reference, 0, 21, 1, 9, 5, 1)
+        predicted_shapes = [(13, 4, 2), (12, 8, 1), (13, 8, 1), (12, 7, 1), (13, 7, 1)]
+        actual_shapes = [(12, 4, 1), (13, 4, 1), (12, 3, 1), (13, 3, 1), (13, 8, 2)]
+        for index, ((x, y, footprint), (actual_x, actual_y, actual_footprint)) in enumerate(
+                zip(predicted_shapes, actual_shapes)):
+            creature = 13 if footprint == 2 else 15
+            actual_creature = 13 if actual_footprint == 2 else 15
+            struct.pack_into('<I', public, 920 + index * 4, creature)
+            struct.pack_into('<2i', public, 96 + index * 8, x, y)
+            struct.pack_into('<4I2i', actual, 1648 + index * 24, 0, creature, 0, footprint, x, y)
+            struct.pack_into('<4I2i', actual, 2012 + index * 24,
+                             1001 + index, actual_creature, 1, actual_footprint, actual_x, actual_y)
+            struct.pack_into('<6I4i3I', reference, 20 + index * 52,
+                             actual_creature, 1, actual_footprint, index + 1, 2, 0,
+                             actual_x, actual_y, 3, 3, 3, 1, 0)
+        actual[2192:2192 + len(reference)] = reference
+        result = verifier.compare_player_snapshots(public, reference, actual, 21)
+        self.assertEqual(result['predicted_only'], [])
+        self.assertEqual(result['actual_only'], [])
+        self.assertFalse(result['position_full_match'])
+
+        refusals = [
+            ('stale public attack', 0, 4, '<I', 20),
+            ('unrendered but nonempty frozen forecast', 0, 12, '<I', 8),
+            ('invalid frozen count', 2, 1628, '<I', 8),
+            ('stale full reference', 1, 0, '<I', 20),
+            ('missing explanation rule', 1, 60, '<I', 0),
+            ('invalid placement order', 1, 32, '<I', 3),
+            ('full reference disagrees with facts', 1, 24, '<I', 51),
+            ('odd capture sequence', 2, 28, '<I', 3),
+            ('developer result capture', 2, 8, '<I', 1),
+            ('developer position observations', 2, 12, '<I', 1),
+            ('developer roster observed', 2, 1600, '<I', 1),
+            ('developer roster count', 2, 1604, '<I', 1),
+            ('developer roster failure', 2, 1608, '<I', 1),
+            ('unfrozen forecast', 2, 1624, '<I', 0),
+            ('uncommitted facts', 2, 1640, '<I', 0),
+            ('failed committed capture', 2, 1644, '<I', 1),
+            ('invalid field width', 2, 1632, '<I', 7),
+            ('same army on both sides', 2, 1824, '<I', 200),
+            ('missing own army', 2, 1828, '<I', 0),
+            ('overflowed committed roster', 2, 1840, '<I', 1),
+            ('mutated frozen forecast', 2, 1652, '<I', 2),
+            ('empty actual stack', 2, 2020, '<I', 0),
+            ('actual footprint outside field', 2, 2028, '<i', 1),
+            ('duplicate actor', 2, 2012, '<I', 1000),
+            ('script result observer', 2, 2180, '<I', 1),
+            ('changed post-Start reference', 2, 2212, '<I', 2),
+        ]
+        for name, buffer_index, offset, encoding, value in refusals:
+            with self.subTest(name=name):
+                buffers = fixture()
+                struct.pack_into(encoding, buffers[buffer_index], offset, value)
+                if buffer_index == 1:
+                    buffers[2][2192:2192 + len(buffers[1])] = buffers[1]
+                with self.assertRaises(ValueError):
+                    verifier.compare_player_snapshots(*buffers, 21)
+        with self.assertRaises(ValueError):
+            verifier.compare_player_snapshots(b'', b'', b'', 21)
+
+    def test_managed_campaign_requires_all_packs_fresh_rounds_and_independent_totals(self):
+        import copy
+        specification = importlib.util.spec_from_file_location('player_campaign_check', MOD_ROOT / 'scripts/check.py')
+        verifier = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(verifier)
+        owner = {'pid': 1234, 'created': 999}
+        fixtures = {family: {'name': family, 'map_sha256': family + '-digest',
+                            'kind': 'authored_polygon' if family == 'polygon' else 'tagged_universe_rmg',
+                            'source_name': family + '-source', 'source_sha256': family + '-source-digest',
+                            'packs': [{'name': family + '_first', 'public_count': 2},
+                                      {'name': family + '_second', 'public_count': 2},
+                                      {'name': family + '_solo', 'public_count': 1}]}
+                    for family in ('polygon', 'rmg_a', 'rmg_b')}
+        report = {'schema': 2, 'transport': 'managed_owned_session', 'mode': 'normal_public_prediction',
+                  'owner': owner, 'requested_rounds': 10, 'runs': []}
+        evidence = {}
+        generation, clock = 21, 100
+        for index in range(10):
+            family = ('polygon', 'rmg_a', 'rmg_b')[index % 3]
+            run = {'round': index + 1, 'family': family, 'map': family,
+                   'load': {'owner': owner, 'token': f'load-{index}', 'status': 'ready', 'phase': 'adventure',
+                            'submitted_ns': clock + 1, 'ready_ns': clock + 2, 'map_sha256': family + '-digest'},
+                   'battles': []}
+            clock += 2
+            for pack in fixtures[family]['packs']:
+                generation += 1
+                identity = f'battle-{generation}'
+                public, reference, actual = self.player_snapshot_fixture()
+                if pack['public_count'] == 1:
+                    reference = reference[:72]
+                    struct.pack_into('<I', reference, 12, 1)
+                    struct.pack_into('<I', public, 16, 1)
+                    struct.pack_into('<I', public, 776, 1)
+                    struct.pack_into('<I', actual, 1628, 1)
+                    struct.pack_into('<I', actual, 1832, 1)
+                struct.pack_into('<I', public, 4, generation)
+                struct.pack_into('<I', reference, 0, generation)
+                struct.pack_into('<I', actual, 4, generation)
+                struct.pack_into('<I', actual, 1620, generation)
+                actual[2192:2192 + len(reference)] = reference
+                for label, blob in [('public', public), ('reference', reference), ('actual', actual)]:
+                    evidence[identity + '-' + label] = bytes(blob)
+                battle = {'id': identity, 'owner': owner, 'pack': pack['name'], 'generation': generation,
+                          'clock': 'perf_counter_ns', 'before_start_ns': clock + 1, 'start_ns': clock + 2,
+                          'after_start_ns': clock + 3, 'public_before': identity + '-public',
+                          'reference_before': identity + '-reference', 'committed_after': identity + '-actual',
+                          'explanation': {'status': 'verified_actual_placement', 'scope': 'actual_placement',
+                                          'reference_sha256': hashlib.sha256(reference).hexdigest(),
+                                          'orders': list(range(1, pack['public_count'] + 1)),
+                                          'reason': 'Placement order and cell rules are retained in the verified full reference.'},
+                          'return': {'owner': owner, 'generation': generation, 'phase': 'adventure', 'time_ns': clock + 4}}
+                evidence[identity] = json.dumps(battle).encode()
+                run['battles'].append(identity)
+                clock += 4
+            clock += 1
+            run['completion'] = {'owner': owner, 'generation': generation, 'phase': 'adventure', 'time_ns': clock}
+            report['runs'].append(run)
+        report['acceptance'] = {'battles': 30, 'full_matches': 30, 'mixed_battles': 20, 'mixed_full_matches': 20,
+                                'reference_full_matches': 30, 'solo_battles': 10, 'solo_full_matches': 10, 'passed': True}
+        self.assertEqual(verifier.verify_player_campaign_data(report, fixtures, evidence.__getitem__), report['acceptance'])
+        duplicate_fixture = copy.deepcopy(fixtures)
+        duplicate_fixture['rmg_b']['map_sha256'] = duplicate_fixture['rmg_a']['map_sha256']
+        with self.assertRaisesRegex(ValueError, 'two distinct RMG'):
+            verifier.verify_player_campaign_data(report, duplicate_fixture, evidence.__getitem__)
+        duplicate_fixture = copy.deepcopy(fixtures)
+        duplicate_fixture['rmg_b']['source_sha256'] = duplicate_fixture['rmg_a']['source_sha256']
+        with self.assertRaisesRegex(ValueError, 'two distinct RMG'):
+            verifier.verify_player_campaign_data(report, duplicate_fixture, evidence.__getitem__)
+        missing_round = copy.deepcopy(report)
+        missing_round['runs'].pop()
+        missing_pack = copy.deepcopy(report)
+        missing_pack['runs'][0]['battles'].pop()
+        reordered_packs = copy.deepcopy(report)
+        reordered_packs['runs'][0]['battles'].reverse()
+        reused_load = copy.deepcopy(report)
+        reused_load['runs'][1]['load']['token'] = reused_load['runs'][0]['load']['token']
+        false_totals = copy.deepcopy(report)
+        false_totals['acceptance']['battles'] = 19
+        invalid_completion = copy.deepcopy(report)
+        invalid_completion['runs'][0]['completion']['phase'] = 'combat'
+        for candidate in [missing_round, missing_pack, reordered_packs, reused_load, false_totals, invalid_completion]:
+            with self.subTest(invalid_report=candidate):
+                with self.assertRaises(ValueError):
+                    verifier.verify_player_campaign_data(candidate, fixtures, evidence.__getitem__)
+        first_identity = report['runs'][0]['battles'][0]
+        original = evidence[first_identity]
+        for field, value in [('owner', {'pid': 1235, 'created': 999}), ('clock', 'monotonic_ns'),
+                             ('generation', 0), ('start_ns', 103), ('explanation', {}),
+                             ('explanation', {'status': 'pending_causal_reconstruction'})]:
+            battle = json.loads(original)
+            battle[field] = value
+            evidence[first_identity] = json.dumps(battle).encode()
+            with self.subTest(invalid_battle_field=field):
+                with self.assertRaises(ValueError):
+                    verifier.verify_player_campaign_data(report, fixtures, evidence.__getitem__)
+        evidence[first_identity] = original
+        all_identities = [identity for run in report['runs'] for identity in run['battles']
+                          if not json.loads(evidence[identity])['pack'].endswith('_solo')]
+        for index, identity in enumerate(all_identities[:7]):
+            public, actual = bytearray(evidence[identity + '-public']), bytearray(evidence[identity + '-actual'])
+            struct.pack_into('<2i', public, 96, 12, 4)
+            struct.pack_into('<2i', actual, 1664, 12, 4)
+            evidence[identity + '-public'], evidence[identity + '-actual'] = bytes(public), bytes(actual)
+            if index == 5:
+                report['acceptance'].update(full_matches=24, mixed_full_matches=14)
+                self.assertTrue(verifier.verify_player_campaign_data(report, fixtures, evidence.__getitem__)['passed'])
+                solo_originals = {}
+                for run in report['runs']:
+                    identity_solo = run['battles'][-1]
+                    for label, offset in [('public', 96), ('actual', 1664)]:
+                        key = identity_solo + '-' + label
+                        solo_originals[key] = evidence[key]
+                        blob = bytearray(evidence[key])
+                        struct.pack_into('<2i', blob, offset, 12, 4)
+                        evidence[key] = bytes(blob)
+                report['acceptance'].update(full_matches=14, solo_full_matches=0)
+                self.assertTrue(verifier.verify_player_campaign_data(report, fixtures, evidence.__getitem__)['passed'])
+                evidence.update(solo_originals)
+                report['acceptance'].update(solo_full_matches=10)
+        report['acceptance'].update(full_matches=23, mixed_full_matches=13, passed=False)
+        with self.assertRaisesRegex(ValueError, 'require at least70%'):
+            verifier.verify_player_campaign_data(report, fixtures, evidence.__getitem__)
+
+    def test_managed_evidence_is_bounded_hashed_and_fixture_selection_is_complete(self):
+        import ast
+        import copy
+        from zipfile import ZipFile
+        import xml.etree.ElementTree as ET
+        source = ast.parse((MOD_ROOT / 'scripts/accuracy-campaign.py').read_text(encoding='utf-8'))
+        functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and
+                     node.name in ('read_managed_evidence', 'managed_fixture_packs')]
+        namespace = {'Path': Path, 'hashlib': hashlib, 'ZipFile': ZipFile, 'ET': ET, 're': re,
+                     'sha256': lambda path: hashlib.sha256(path.read_bytes()).hexdigest()}
+        exec(compile(ast.Module(body=functions, type_ignores=[]), '<managed-file-boundaries>', 'exec'), namespace)
+        with tempfile.TemporaryDirectory(prefix='managed-evidence-') as directory:
+            root = Path(directory)
+            content = b'{"event":"frozen"}\n'
+            (root / 'battle.jsonl').write_bytes(b'prefix\n' + content + b'later append\n')
+            reference = {'path': 'battle.jsonl', 'offset': 7, 'length': len(content),
+                         'sha256': hashlib.sha256(content).hexdigest()}
+            self.assertEqual(namespace['read_managed_evidence'](reference, root), content)
+            for changes in [{'path': '../outside.json'}, {'path': str(root / 'battle.jsonl')},
+                            {'offset': -1}, {'length': 65537}, {'length': len(content) + 1}, {'sha256': 'changed'}]:
+                with self.subTest(invalid_reference=changes):
+                    with self.assertRaises(RuntimeError):
+                        namespace['read_managed_evidence']({**reference, **changes}, root)
+            maps = root / '.local/test-game/Maps'
+            maps.mkdir(parents=True)
+            monsters = ''.join(
+                f'<AdvMapMonster><Name>pack_{index}</Name><Pos><x>{index}</x><y>1</y></Pos>'
+                '<AdditionalStacks><Item/></AdditionalStacks></AdvMapMonster>' for index in range(3))
+            path = maps / 'WorkshopPolygon.h5m'
+            with ZipFile(path, 'w') as archive:
+                archive.writestr('Maps/SingleMissions/WorkshopPolygon/map.xdb', '<Map>' + monsters + '</Map>')
+            fixture = {'name': 'WorkshopPolygon', 'map_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                       'packs': [{'name': f'pack_{index}', 'public_count': 2} for index in range(3)]}
+            self.assertEqual(namespace['managed_fixture_packs'](root, 'polygon', fixture)['packs'], fixture['packs'])
+            omitted = copy.deepcopy(fixture)
+            del omitted['packs'][0]
+            with self.assertRaisesRegex(RuntimeError, 'omits or changes selected packs'):
+                namespace['managed_fixture_packs'](root, 'polygon', omitted)
+            fixture['map_sha256'] = 'stale'
+            with self.assertRaisesRegex(RuntimeError, 'map changed'):
+                namespace['managed_fixture_packs'](root, 'polygon', fixture)
+            # Seven guards of one stack-count class: every nearest-town top-six
+            # selection must remain present, rather than a convenient smoke subset.
+            source_map = maps / 'source.h5m'
+            tagged = maps / 'WorkshopRmgTaggedA.h5m'
+            monsters = ''.join(
+                f'<AdvMapMonster><Name>rmg_a_{index:03}</Name><Pos><x>{index}</x><y>1</y></Pos>'
+                '<AdditionalStacks><Item/></AdditionalStacks></AdvMapMonster>' for index in range(7))
+            with ZipFile(source_map, 'w') as archive:
+                archive.writestr('Maps/SingleMissions/Original/map.xdb',
+                    '<Map><AdvMapTown><Pos><x>0</x><y>0</y></Pos></AdvMapTown>' + monsters + '</Map>')
+                archive.writestr('Maps/SingleMissions/Original/creature.xdb', '<Creature><Count>20</Count></Creature>')
+            with ZipFile(tagged, 'w') as archive:
+                archive.writestr('Maps/SingleMissions/Tagged/map.xdb',
+                    '<Map><AdvMapTown><Pos><x>0</x><y>0</y></Pos></AdvMapTown>' + monsters + '</Map>')
+                archive.writestr('Maps/SingleMissions/Tagged/creature.xdb', '<Creature><Count>20</Count></Creature>')
+            fixture = {'name': 'WorkshopRmgTaggedA', 'map_sha256': hashlib.sha256(tagged.read_bytes()).hexdigest(),
+                       'source_name': 'source.h5m', 'source_sha256': hashlib.sha256(source_map.read_bytes()).hexdigest(),
+                       'packs': [{'name': f'rmg_a_{index:03}', 'public_count': 2} for index in range(6)]}
+            self.assertEqual(namespace['managed_fixture_packs'](root, 'rmg_a', fixture)['packs'], fixture['packs'])
+            fixture['packs'][0]['name'] = 'rmg_a_006'
+            with self.assertRaisesRegex(RuntimeError, 'omits or changes selected packs'):
+                namespace['managed_fixture_packs'](root, 'rmg_a', fixture)
+            fixture['packs'][0]['name'] = 'rmg_a_000'
+            altered = monsters.replace('<AdditionalStacks><Item/>', '<AdditionalStacks><Item><Creature>changed</Creature>', 1)
+            altered = altered.replace('</AdditionalStacks>', '</Item></AdditionalStacks>', 1)
+            with ZipFile(source_map, 'w') as archive:
+                archive.writestr('Maps/SingleMissions/Original/map.xdb',
+                    '<Map><AdvMapTown><Pos><x>0</x><y>0</y></Pos></AdvMapTown>' + altered + '</Map>')
+                archive.writestr('Maps/SingleMissions/Original/creature.xdb', '<Creature><Count>20</Count></Creature>')
+            fixture['source_sha256'] = hashlib.sha256(source_map.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(RuntimeError, 'changed original monster armies'):
+                namespace['managed_fixture_packs'](root, 'rmg_a', fixture)
+
+    def test_managed_army_setup_handles_full_disjoint_armies_and_queued_changes(self):
+        import ast
+        import time
+        from types import SimpleNamespace
+        source = ast.parse((MOD_ROOT / 'scripts/accuracy-campaign.py').read_text(encoding='utf-8'))
+        functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in (
+            'read_managed_army', 'set_managed_army')]
+        namespace = {'time': time, 're': re}
+        exec(compile(ast.Module(body=functions, type_ignores=[]), '<managed-army>', 'exec'), namespace)
+        actual_reader = namespace['read_managed_army']
+        queries = []
+        def query(preparation, fields, timeout):
+            queries.append((preparation, fields))
+            return {'values': ['3', '3', '13', '0', '0', '0', '0',
+                               '100', '100', '1', '0', '0', '0', '0', '1', '1']}
+        self.assertEqual(actual_reader(SimpleNamespace(query=query), 'Brem'), {3: 100, 13: 1})
+        self.assertIn('local a,b,c,d,e,f,g=GetHeroCreaturesTypes', queries[0][0])
+        self.assertEqual(len(queries), 1, 'Roster and counts must be sampled in the same Lua execution')
+        self.assertEqual(len(queries[0][1]), 16)
+        self.assertIn("GetHeroCreatures('Brem',g)", queries[0][1][13])
+        with self.assertRaisesRegex(ValueError, 'command-addressable'):
+            actual_reader(SimpleNamespace(query=query), "Brem');Finish(0);")
+        stolen = SimpleNamespace(query=lambda *args, **kwargs:
+            {'values': ['3', '0', '0', '0', '0', '0', '0',
+                        '100', '0', '0', '0', '0', '0', '0', '2', '1']})
+        with self.assertRaisesRegex(RuntimeError, 'not owned'):
+            actual_reader(stolen, 'Brem')
+        case = self
+
+        class Session:
+            def __init__(self, army, uncertain=False):
+                self.army, self.commands, self.pending = dict(army), [], None
+                self.uncertain = uncertain
+
+            def command(self, command, timeout=None):
+                case.assertIsNone(self.pending, 'Never submit another delta before readback')
+                self.commands.append(command)
+                if self.uncertain:
+                    raise TimeoutError('Army dispatch uncertain')
+                match = re.search(r'(Add|Remove)HeroCreatures\(\x27Brem\x27,(\d+),(\d+)\)', command)
+                case.assertIsNotNone(match)
+                operation, kind, delta = match.groups()
+                self.pending = (operation, int(kind), int(delta), 0)
+
+            def read(self, hero, timeout):
+                if self.pending:
+                    operation, kind, delta, polls = self.pending
+                    if polls == 0:
+                        self.pending = (operation, kind, delta, 1)
+                    else:
+                        count = self.army.get(kind, 0) + (delta if operation == 'Add' else -delta)
+                        if count:
+                            self.army[kind] = count
+                        elif len(self.army) == 1:
+                            self.army[kind] = 1
+                        else:
+                            self.army.pop(kind)
+                        case.assertTrue(self.army, 'Hero must retain an anchor army')
+                        case.assertLessEqual(len(self.army), 7, 'Game has only seven creature slots')
+                        self.pending = None
+                return dict(self.army)
+
+        namespace['read_managed_army'] = lambda session, hero, timeout: session.read(hero, timeout)
+        for original, target in [({kind: 10 for kind in range(1, 8)}, {kind: 20 for kind in range(8, 15)}),
+                                 ({3: 20, 13: 2}, {3: 100, 13: 1}), ({3: 100}, {3: 100})]:
+            with self.subTest(original=original, target=target):
+                session = Session(original)
+                self.assertEqual(namespace['set_managed_army'](session, 'Brem', target), target)
+                self.assertEqual(session.army, target)
+                self.assertEqual(len(session.commands), len(set(session.commands)), 'No queued delta replay')
+        session = Session({3: 20}, uncertain=True)
+        with self.assertRaisesRegex(TimeoutError, 'dispatch uncertain'):
+            namespace['set_managed_army'](session, 'Brem', {3: 100})
+        self.assertEqual(len(session.commands), 1)
+        with self.assertRaisesRegex(ValueError, 'one to seven'):
+            namespace['set_managed_army'](session, 'Brem', {})
+
+    def test_managed_capture_durably_freezes_before_start_and_never_replays_uncertain_actions(self):
+        import ast
+        import time
+        from unittest.mock import patch
+        specification = importlib.util.spec_from_file_location('managed_capture_verifier', MOD_ROOT / 'scripts/check.py')
+        verifier = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(verifier)
+        source = ast.parse((MOD_ROOT / 'scripts/accuracy-campaign.py').read_text(encoding='utf-8'))
+        functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in (
+            'write_managed_evidence', 'capture_managed_battle', 'read_managed_evidence')]
+        namespace = {'os': os, 'time': time, 'struct': struct, 're': re, 'json': json,
+                     'hashlib': hashlib, 'Path': Path, 'compare_player_snapshots': verifier.compare_player_snapshots}
+        exec(compile(ast.Module(body=functions, type_ignores=[]), '<managed-capture>', 'exec'), namespace)
+        fixture = self.player_snapshot_fixture
+        case = self
+
+        class Session:
+            owner = {'pid': 1234, 'created': 999}
+            public_address, comparison_address = 10000, 20000
+
+            def __init__(self, root, uncertain=False, stale=False, sequence_mode=None):
+                self.public, self.reference, self.actual = fixture()
+                self.before = bytearray(self.actual)
+                struct.pack_into('<8I', self.before, 1616, 1, 0, 0, 0, 0, 0, 0, 0)
+                if stale:
+                    struct.pack_into('<I', self.before, 2192, 20)
+                self.started, self.commands, self.root, self.uncertain = False, [], root, uncertain
+                self.sequence_mode, self.sequence_reads = sequence_mode, 0
+
+            def read(self, address, length):
+                if address == self.public_address:
+                    return bytes(self.public)
+                if address == self.comparison_address + 28 and self.sequence_mode:
+                    self.sequence_reads += 1
+                    return struct.pack('<I', 1 if self.sequence_mode == 'odd' else self.sequence_reads * 2)
+                context = self.actual if self.started else self.before
+                offset = address - self.comparison_address
+                return bytes(context[offset:offset + length])
+
+            def check_owner(self):
+                return None
+
+            def command(self, command, timeout=None):
+                self.commands.append(command)
+                if command == 'game-event confirm_placement':
+                    directory = self.root / '1234-999-21'
+                    case.assertEqual((directory / 'public-before.bin').read_bytes(), self.public)
+                    case.assertEqual((directory / 'reference-before.bin').read_bytes(), self.reference)
+                    events = [json.loads(line) for line in (directory / 'events.jsonl').read_bytes().splitlines()]
+                    case.assertEqual([row['stage'] for row in events],
+                                     ['capture_started', 'frozen_before_start', 'start_submitted'])
+                    case.assertGreaterEqual(sync.call_count, 5)
+                    self.started = True
+                    if self.uncertain:
+                        raise TimeoutError('Start dispatch uncertain')
+
+            def screens(self):
+                return ['.?AVCCombatArenaScreen@NUI@@']
+
+            def wait_screen(self, fragment, timeout):
+                return [fragment]
+
+        with tempfile.TemporaryDirectory(prefix='managed-capture-') as directory:
+            root = Path(directory)
+            with patch.object(os, 'fsync', wraps=os.fsync) as sync:
+                session = Session(root)
+                battle, reference, comparison = namespace['capture_managed_battle'](session, root, 'pack_0', 21)
+                self.assertEqual(json.loads(namespace['read_managed_evidence'](reference, root)), battle)
+                self.assertTrue(comparison['reference_full_match'])
+                self.assertLess(battle['before_start_ns'], battle['start_ns'])
+                self.assertLess(battle['start_ns'], battle['after_start_ns'])
+                self.assertLess(battle['after_start_ns'], battle['return']['time_ns'])
+                original = (root / reference['path']).read_bytes()
+                commands = list(session.commands)
+                with self.assertRaises(FileExistsError):
+                    namespace['capture_managed_battle'](session, root, 'pack_0', 21)
+                self.assertEqual(session.commands, commands)
+                self.assertEqual((root / reference['path']).read_bytes(), original)
+                self.assertEqual(commands, ['game-event confirm_placement', 'game-script Finish(0)',
+                                            'game-event enter_pressed'])
+                failure_root = root / 'uncertain'
+                failure_root.mkdir()
+                session = Session(failure_root, uncertain=True)
+                with self.assertRaisesRegex(TimeoutError, 'Start dispatch uncertain'):
+                    namespace['capture_managed_battle'](session, failure_root, 'pack_0', 21)
+                self.assertEqual(session.commands, ['game-event confirm_placement'])
+                events = [json.loads(line) for line in (failure_root / '1234-999-21/events.jsonl').read_bytes().splitlines()]
+                self.assertEqual(events[-1]['stage'], 'failed')
+                self.assertEqual(events[-1]['partial_battle']['reference_before']['sha256'],
+                                 hashlib.sha256(session.reference).hexdigest())
+                stale_root = root / 'stale'
+                stale_root.mkdir()
+                session = Session(stale_root, stale=True)
+                with self.assertRaisesRegex(TimeoutError, 'not replayed'):
+                    namespace['capture_managed_battle'](session, stale_root, 'pack_0', 21, timeout=0.001)
+                self.assertEqual(session.commands, [])
+                for mode in ('odd', 'changing'):
+                    incoherent_root = root / mode
+                    incoherent_root.mkdir()
+                    session = Session(incoherent_root, sequence_mode=mode)
+                    with self.assertRaisesRegex(TimeoutError, 'not replayed'):
+                        namespace['capture_managed_battle'](session, incoherent_root, 'pack_0', 21, timeout=0.001)
+                    self.assertEqual(session.commands, [], 'Start requires an even unchanged snapshot sequence')
+                    self.assertFalse((incoherent_root / '1234-999-21/public-before.bin').exists())
+                unavailable_root = root / 'unavailable'
+                unavailable_root.mkdir()
+                session = Session(unavailable_root)
+                struct.pack_into('<I', session.public, 12, 8)
+                struct.pack_into('<I', session.actual, 1628, 0)
+                battle, reference, comparison = namespace['capture_managed_battle'](
+                    session, unavailable_root, 'pack_0', 21)
+                self.assertEqual(comparison['prediction'], [])
+                self.assertFalse(comparison['position_full_match'])
+                self.assertTrue(comparison['reference_full_match'])
+                self.assertEqual(session.commands.count('game-event confirm_placement'), 1)
+            failed_disk = root / 'failed-disk'
+            failed_disk.mkdir()
+            session = Session(failed_disk)
+            with patch.object(os, 'fsync', side_effect=[None, None, OSError('Disk flush failed'), None]):
+                with self.assertRaisesRegex(OSError, 'Disk flush failed'):
+                    namespace['capture_managed_battle'](session, failed_disk, 'pack_0', 21)
+            self.assertEqual(session.commands, [], 'Start is forbidden when either initial snapshot was not flushed')
+
+    def test_managed_producer_rotates_all_packs_and_publishes_only_verified_reports(self):
+        import argparse
+        import ast
+        import copy
+        import time
+        import uuid
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        source = ast.parse((MOD_ROOT / 'scripts/accuracy-campaign.py').read_text(encoding='utf-8'))
+        functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in (
+            'run_managed_campaign', 'verify_latest_managed_report', 'write_managed_evidence', 'save', 'main')]
+        with tempfile.TemporaryDirectory(prefix='managed-producer-rotation-') as temporary:
+            root = Path(temporary)
+            (root / '.local/test-game/bin').mkdir(parents=True)
+            (root / '.local/test-game/bin/H5_Game.exe').write_bytes(b'game')
+            fixtures = {family: {'name': family, 'map_sha256': family,
+                'packs': [{'name': f'pack_{index}', 'public_count': 1 if index % 2 else 2} for index in range(count)]}
+                for family, count in [('polygon', 36), ('rmg_a', 24), ('rmg_b', 19)]}
+            owner = {'pid': 1234, 'created': 999}
+            seed = {'workspace': str(root), 'owner': owner, 'installed_plugin_sha256': 'plugin',
+                    'report': {'active_payload_sha256': 'plugin', 'ordinary_startup': {'path': 'startup.json'}}}
+            seed_path = root / 'session.json'
+            seed_path.write_text(json.dumps(seed), encoding='utf-8')
+            actions, sessions, captured = [], [], []
+            fail_teleport = False
+            fail_close = False
+            case = self
+
+            class Session:
+                public_address = 10000
+                def __init__(self, record, directory, probe):
+                    actions.append('attach')
+                    self.owner, self.game, self.generation = record['owner'], root / '.local/test-game/bin/H5_Game.exe', 0
+                    self.commands, self.closed, self.close_calls, self.phase = [], False, 0, 'CMainMenuScreen'
+                    sessions.append(self)
+
+                def screens(self):
+                    return [self.phase]
+
+                def command(self, command):
+                    self.commands.append(command)
+                    if command == 'console mainmenu':
+                        self.phase = 'CMainMenuScreen'
+                    elif command.startswith('console advmap '):
+                        case.assertEqual(self.phase, 'CMainMenuScreen')
+                        self.phase = 'AdventureScreen'
+                    elif fail_teleport and 'SetObjectPosition' in command:
+                        raise TimeoutError('Teleport uncertain')
+
+                def wait_screen(self, fragment, timeout):
+                    case.assertEqual(self.phase, fragment)
+                    return [fragment]
+
+                def query(self, preparation, fields, timeout=5):
+                    if fields == ['GetAllNames(0)']:
+                        return {'values': ['Other Brem']}
+                    if fields[-1] == 'GetCurrentPlayer()':
+                        return {'values': ['1', '1']}
+                    if fields == ['x', 'y', 'z']:
+                        return {'values': ['10', '10' if "('Brem')" in preparation or "('Other')" in preparation else '11', '0']}
+                    constants = {'CREATURE_ARCHER': 3, 'CREATURE_PEASANT': 1, 'CREATURE_ANGEL': 13,
+                        'CREATURE_GOBLIN': 101, 'CREATURE_SHAMAN_WITCH': 102, 'CREATURE_CYCLOP_UNTAMED': 103,
+                        'CREATURE_GRAND_ELF': 104, 'CREATURE_UNICORN': 105, 'CREATURE_PIT_FIEND': 106}
+                    return {'values': [str(constants[field]) for field in fields]}
+
+                def read(self, address, length):
+                    return struct.pack('<I', self.generation)
+
+                def close(self):
+                    self.close_calls += 1
+                    self.closed = True
+                    if fail_close:
+                        raise RuntimeError('Borrowed cleanup unconfirmed')
+
+            def preflight(report, path):
+                actions.append('preflight')
+                return fixtures, lambda reference: b'{}'
+
+            def capture(session, directory, name, generation):
+                case.assertEqual(generation, session.generation + 1)
+                session.generation = generation
+                captured.append(name)
+                battle = {'generation': generation, 'pack': name}
+                path = directory / f'battle-{generation}.json'
+                reference = namespace['write_managed_evidence'](path, json.dumps(battle).encode(), directory)
+                return battle, reference, {'position_full_match': True, 'reference_full_match': True}
+
+            final_verifier = Mock()
+            namespace = {'Path': Path, 'time': time, 'uuid': uuid, 'json': json, 'os': os, 're': re,
+                'argparse': argparse, 'sys': sys, '__doc__': 'Managed campaign',
+                'hashlib': hashlib, 'struct': struct, 'MOD': root, 'probe': object(), '_completed_battle_json': {},
+                'sha256': lambda path: hashlib.sha256(path.read_bytes()).hexdigest(),
+                'check': SimpleNamespace(ROOT=root, ManagedPlayerSession=Session),
+                'source_fingerprints': lambda: {'source_hashes': {}, 'core_source_hashes': {}},
+                'managed_helper_fingerprints': lambda: {'driver': 'driver'},
+                'verify_managed_artifacts': preflight, 'verify_managed_report': final_verifier,
+                'read_managed_army': lambda session, hero: {3: 100, 13: 1},
+                'set_managed_army': Mock(), 'capture_managed_battle': capture}
+            exec(compile(ast.Module(body=functions, type_ignores=[]), '<managed-producer>', 'exec'), namespace)
+            game_launch = SimpleNamespace(map_arguments=lambda game, name: ['-advmap', name])
+            with patch.dict(sys.modules, {'game_launch': game_launch}):
+                target = namespace['run_managed_campaign'](seed_path)
+                report = json.loads(target.read_text())
+                self.assertEqual(actions[:2], ['preflight', 'attach'])
+                self.assertEqual(len(sessions), 1)
+                self.assertTrue(sessions[0].closed)
+                self.assertEqual(len(captured), 273)
+                schedule = ['polygon', 'rmg_a', 'rmg_b'] * 3 + ['polygon']
+                self.assertEqual(captured, [pack['name'] for family in schedule for pack in fixtures[family]['packs']])
+                self.assertEqual(namespace['set_managed_army'].call_count, 273)
+                self.assertEqual([run['family'] for run in report['runs']],
+                    ['polygon', 'rmg_a', 'rmg_b'] * 3 + ['polygon'])
+                self.assertEqual(len({run['load']['token'] for run in report['runs']}), 10)
+                polygon_profiles = [{3: 100}, {1: 1000}, {13: 10},
+                    {101: 100, 102: 10, 103: 3, 3: 100, 104: 50, 105: 10, 106: 8}]
+                self.assertEqual([run['hero'] for run in report['runs']],
+                    ['Brem' if family == 'polygon' else 'Other' for family in schedule])
+                self.assertEqual([run['own_army_profile'] for run in report['runs'] if run['family'] == 'polygon'],
+                    [{str(kind): count for kind, count in profile.items()} for profile in polygon_profiles])
+                expected_profiles = iter(polygon_profiles)
+                armies = [next(expected_profiles) if family == 'polygon' else {3: 100, 13: 1} for family in schedule]
+                self.assertEqual([call.args[2] for call in namespace['set_managed_army'].call_args_list],
+                    [army for army, family in zip(armies, schedule) for pack in fixtures[family]['packs']])
+                self.assertEqual(report['acceptance']['reference_full_matches'], 273)
+                self.assertEqual(report['acceptance']['battles'], 273)
+                self.assertTrue(report['acceptance']['passed'])
+                self.assertEqual(sum(command.startswith('console advmap ') for command in sessions[0].commands), 10)
+                final_verifier.assert_called_once()
+                pointer = root / '.local/managed-accuracy-latest.json'
+                accepted_pointer = pointer.read_bytes()
+                namespace['verify_latest_managed_report'](pointer)
+                self.assertEqual(final_verifier.call_count, 2)
+                pointer.write_text('{')
+                with patch.object(Path, 'exists', return_value=False), patch.object(sys, 'argv', ['campaign', '--verify-latest']):
+                    with self.assertRaises(json.JSONDecodeError):
+                        namespace['main']()
+                pointer.write_bytes(accepted_pointer)
+                fail_teleport = True
+                with self.assertRaisesRegex(TimeoutError, 'Teleport uncertain'):
+                    namespace['run_managed_campaign'](seed_path)
+                self.assertTrue(sessions[-1].closed)
+                self.assertEqual(pointer.read_bytes(), accepted_pointer)
+                failed = [json.loads(path.read_text()) for path in root.glob('.local/managed-accuracy-*/report.json')
+                          if path != target]
+                self.assertEqual(len(failed), 1)
+                self.assertIn('Teleport uncertain', failed[0]['error'])
+                self.assertEqual(failed[0]['runs'][0]['battles'], [])
+                fail_teleport = False
+                final_verifier.side_effect = ValueError('Final acceptance failed')
+                with self.assertRaisesRegex(ValueError, 'Final acceptance failed'):
+                    namespace['run_managed_campaign'](seed_path)
+                self.assertEqual(pointer.read_bytes(), accepted_pointer)
+                self.assertTrue(sessions[-1].closed)
+                final_verifier.side_effect = None
+                fail_close = True
+                with self.assertRaisesRegex(RuntimeError, 'Borrowed cleanup unconfirmed'):
+                    namespace['run_managed_campaign'](seed_path)
+                self.assertEqual(sessions[-1].close_calls, 1, 'Uncertain cleanup must not be replayed')
+                self.assertEqual(pointer.read_bytes(), accepted_pointer)
+                cleanup_failures = [json.loads(path.read_text()) for path in root.glob('.local/managed-accuracy-*/report.json')
+                    if 'cleanup unconfirmed' in path.read_text()]
+                self.assertEqual(len(cleanup_failures), 1)
+                self.assertIn('cleanup unconfirmed', cleanup_failures[0]['error'])
+                fail_close = False
+                target.write_text(target.read_text() + ' ')
+                with self.assertRaisesRegex(RuntimeError, 'report changed'):
+                    namespace['verify_latest_managed_report'](pointer)
+                rejected_seed = copy.deepcopy(seed)
+                rejected_seed['installed_plugin_sha256'] = 'another-plugin'
+                seed_path.write_text(json.dumps(rejected_seed))
+                previous_attachments = len(sessions)
+                with self.assertRaisesRegex(RuntimeError, 'controller identity differs'):
+                    namespace['run_managed_campaign'](seed_path)
+                self.assertEqual(len(sessions), previous_attachments)
+
+    def test_managed_entrypoint_binds_final_archive_installation_and_ordinary_startup(self):
+        import ast
+        import copy
+        import io
+        from contextlib import redirect_stdout
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from zipfile import ZipFile
+        source = ast.parse((MOD_ROOT / 'scripts/accuracy-campaign.py').read_text(encoding='utf-8'))
+        functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in (
+            'read_managed_evidence', 'managed_helper_fingerprints', 'verify_managed_artifacts', 'verify_managed_report', 'verify_report')]
+        digest = lambda content: hashlib.sha256(content).hexdigest()
+        with tempfile.TemporaryDirectory(prefix='managed-release-binding-') as directory:
+            root = Path(directory)
+            mod, sdk = root / 'mod', root / 'mod/devkit'
+            helpers = {'driver': mod / 'scripts/accuracy-campaign.py', 'comparison': mod / 'scripts/check.py',
+                       'transport': mod / 'scripts/native-preview-check.py',
+                       'probe': sdk / 'scripts/native-probe.py', 'core_client': sdk / 'scripts/plugin_core.py',
+                       'controller_source': sdk / 'native/plugin_bridge_client.cpp'}
+            for name, path in helpers.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(name.encode())
+            bridge = sdk / 'native/plugin_bridge.cpp'
+            bridge.write_bytes(b'shared bridge')
+            game_files = {'bin/Heroes5Mods/Plugins/deployment-preview.dll': b'player DLL',
+                          'bin/dinput8.dll': b'loader', 'bin/d3d9.dll': b'facade',
+                          'bin/d3d9.universe.dll': b'original Universe', 'bin/H5_Game.exe': b'game EXE'}
+            for name, content in game_files.items():
+                path = root / '.local/test-game' / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            manifest = {'source_hashes': {'body': 'source'}, 'core_source_hashes': {'bridge': 'core'},
+                        'plugin_sha256': digest(game_files['bin/Heroes5Mods/Plugins/deployment-preview.dll']),
+                        'loader_sha256': digest(game_files['bin/dinput8.dll']),
+                        'graphics_facade_sha256': digest(game_files['bin/d3d9.dll']),
+                        'graphics_original_sha256': digest(game_files['bin/d3d9.universe.dll']),
+                        'bridge_source_sha256': digest(bridge.read_bytes())}
+            package = root / 'player.zip'
+            with ZipFile(package, 'w') as archive:
+                for name, content in game_files.items():
+                    if name not in ('bin/d3d9.universe.dll', 'bin/H5_Game.exe'):
+                        archive.writestr(name, content)
+                archive.writestr('release.json', json.dumps(manifest))
+            owner = {'pid': 1234, 'created': 999}
+            startup = {'passed': True, 'owner': owner, 'archive_sha256': digest(package.read_bytes()),
+                       'plugin_sha256': manifest['plugin_sha256'], 'automatic_install_status': 2,
+                       'launch_flags': 0, 'startup_memory_patches': [],
+                       'developer_controller_attached_before_acceptance': False}
+            startup_path = root / 'startup.json'
+            startup_path.write_bytes(json.dumps(startup).encode())
+            reference = {'path': 'startup.json', 'length': startup_path.stat().st_size,
+                         'sha256': digest(startup_path.read_bytes())}
+            report = {**manifest, 'transport': 'managed_owned_session', 'owner': owner,
+                      'package': {'path': str(package), 'sha256': digest(package.read_bytes())},
+                      'active_payload_sha256': manifest['plugin_sha256'], 'ordinary_startup': reference,
+                      'helper_sha256': {name: digest(path.read_bytes()) for name, path in helpers.items()},
+                      'game_exe_sha256': digest(game_files['bin/H5_Game.exe']),
+                      'fixtures': {family: {'name': family} for family in ('polygon', 'rmg_a', 'rmg_b')}}
+            # These peer validators have separate real data/XML tests above;
+            # this test exercises the actual entrypoint's file/provenance guards.
+            source_guard = Mock()
+            data_guard = Mock(return_value={'mixed_full_matches': 14, 'mixed_battles': 20,
+                                            'reference_full_matches': 30, 'battles': 30})
+            namespace = {'Path': Path, 'hashlib': hashlib, 'json': json, 'ZipFile': ZipFile,
+                         'MOD': mod, '__file__': str(helpers['driver']),
+                         'check': SimpleNamespace(ROOT=root, DEVKIT=sdk, PROBE=helpers['probe']),
+                         'sha256': lambda path: digest(path.read_bytes()),
+                         'verify_source_fingerprints': source_guard, 'verify_player_campaign_data': data_guard,
+                         'managed_fixture_packs': lambda workspace, family, fixture: fixture}
+            exec(compile(ast.Module(body=functions, type_ignores=[]), '<managed-release-entrypoint>', 'exec'), namespace)
+            report_path = root / 'report.json'
+
+            def verify(candidate):
+                report_path.write_text(json.dumps(candidate), encoding='utf-8')
+                with redirect_stdout(io.StringIO()):
+                    return namespace['verify_report'](report_path)
+
+            self.assertEqual(verify(report), data_guard.return_value)
+            self.assertEqual(source_guard.call_args_list[0].args[0], report)
+            self.assertEqual(source_guard.call_args_list[1].args[0], manifest)
+            self.assertEqual(data_guard.call_args.args[0], report)
+            stale_archive = copy.deepcopy(report)
+            stale_archive['package']['sha256'] = 'stale'
+            with self.assertRaisesRegex(RuntimeError, 'player archive changed'):
+                verify(stale_archive)
+            original_package = package.read_bytes()
+            with ZipFile(package, 'w') as archive:
+                for name, content in game_files.items():
+                    if name not in ('bin/d3d9.universe.dll', 'bin/H5_Game.exe'):
+                        archive.writestr(name, content + b' changed' if name.endswith('deployment-preview.dll') else content)
+                archive.writestr('release.json', json.dumps(manifest))
+            altered_member = copy.deepcopy(report)
+            altered_member['package']['sha256'] = digest(package.read_bytes())
+            startup_path.write_bytes(json.dumps({**startup, 'archive_sha256': altered_member['package']['sha256']}).encode())
+            altered_member['ordinary_startup'].update(length=startup_path.stat().st_size,
+                sha256=digest(startup_path.read_bytes()))
+            with self.assertRaisesRegex(RuntimeError, 'archived and installed player files differ'):
+                verify(altered_member)
+            package.write_bytes(original_package)
+            startup_path.write_bytes(json.dumps(startup).encode())
+            for name in ['bin/Heroes5Mods/Plugins/deployment-preview.dll', 'bin/dinput8.dll',
+                         'bin/d3d9.dll', 'bin/d3d9.universe.dll']:
+                path = root / '.local/test-game' / name
+                path.write_bytes(game_files[name] + b' changed')
+                with self.subTest(changed_installed_file=name):
+                    with self.assertRaises(RuntimeError):
+                        verify(report)
+                path.write_bytes(game_files[name])
+            for field, value in [('active_payload_sha256', 'stale'), ('game_exe_sha256', 'stale'),
+                                 ('helper_sha256', {})]:
+                candidate = copy.deepcopy(report)
+                candidate[field] = value
+                with self.subTest(changed_report_binding=field):
+                    with self.assertRaises(RuntimeError):
+                        verify(candidate)
+            for field, value in [('passed', False), ('launch_flags', 1), ('startup_memory_patches', ['patch']),
+                                 ('developer_controller_attached_before_acceptance', True),
+                                 ('owner', {'pid': 1235, 'created': 999}), ('archive_sha256', 'stale'),
+                                 ('plugin_sha256', 'stale'), ('automatic_install_status', 0)]:
+                startup_path.write_bytes(json.dumps({**startup, field: value}).encode())
+                candidate = copy.deepcopy(report)
+                candidate['ordinary_startup'].update(length=startup_path.stat().st_size,
+                    sha256=digest(startup_path.read_bytes()))
+                with self.subTest(invalid_ordinary_startup=field):
+                    with self.assertRaisesRegex(RuntimeError, 'ordinary player startup acceptance'):
+                        verify(candidate)
+
+    def test_managed_queries_reuse_only_fresh_owned_results_and_fall_back_after_relocation(self):
+        import ast
+        import ctypes
+        import time
+        from ctypes import wintypes
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import uuid
+        source = ast.parse((MOD_ROOT / 'scripts/native-preview-check.py').read_text(encoding='utf-8'))
+        definition = next(node for node in source.body if isinstance(node, ast.ClassDef) and node.name == 'ManagedPlayerSession')
+        namespace = {'ctypes': ctypes, 'wintypes': wintypes, 'Path': Path, 'hashlib': hashlib,
+                     'struct': struct, 're': re, 'time': time, 'uuid': uuid}
+        exec(compile(ast.Module(body=[definition], type_ignores=[]), '<managed-session-query>', 'exec'), namespace)
+        session_type = namespace['ManagedPlayerSession']
+        session = session_type.__new__(session_type)
+        session.owner = {'pid': 7, 'created': 99}
+        session.handle, session.resident, session.query_regions = 123, 4096, []
+        memory = {65536: bytearray(512), 131072: bytearray(512)}
+        frame, destinations, responses = [0], [65536, 65536, 131072], [('Brem Calid', '2'), ('3', '4'), ('5', '6')]
+        offsets = {address: 0 for address in memory}
+
+        def send(command, timeout=None):
+            nonce = re.search(r'XKIT_PLAYER_[a-f0-9]{32}:', command).group()
+            address = destinations.pop(0)
+            content = (nonce + ':'.join(responses.pop(0)) + ':END').encode()
+            memory[address][offsets[address]:offsets[address] + len(content)] = content
+            offsets[address] += len(content)
+            return {'status': 0}
+
+        def read(kernel, handle, address, length):
+            self.assertEqual(handle, 123)
+            if address == session.resident:
+                frame[0] += 4
+                return struct.pack('<I', frame[0])
+            for start, content in memory.items():
+                if start <= address and address + length <= start + len(content):
+                    return bytes(content[address - start:address - start + length])
+            raise OSError('Unreadable test region')
+
+        def region_query(handle, address, output, size):
+            self.assertEqual(handle, 123)
+            region = ctypes.cast(output, ctypes.POINTER(session_type.MemoryRegion)).contents
+            ranges = [(0, 65536, False), (65536, 512, True), (66048, 65024, False),
+                      (131072, 512, True), (131584, 0x100000000 - 131584, False)]
+            for start, length, writable in ranges:
+                if start <= address < start + length:
+                    region.base, region.size = start, length
+                    region.state = 0x1000 if writable else 0x10000
+                    region.type = 0x20000 if writable else 0
+                    region.protection = 4 if writable else 0
+                    return size
+            return 0
+
+        session.kernel = SimpleNamespace(VirtualQueryEx=Mock(side_effect=region_query), CloseHandle=Mock())
+        session.probe = SimpleNamespace(read=read, creation_time=Mock(return_value=99))
+        session.client = SimpleNamespace(request=Mock(side_effect=send), close=Mock())
+        first = session.query('', ['GetAllNames(0)', '2'])
+        second = session.query('', ['3', '4'])
+        relocated = session.query('', ['5', '6'])
+        self.assertEqual(first['values'], ['Brem Calid', '2'])
+        self.assertEqual(second['values'], ['3', '4'])
+        self.assertEqual(relocated['values'], ['5', '6'])
+        self.assertLess(second['bytes_scanned'], first['bytes_scanned'])
+        self.assertGreater(relocated['bytes_scanned'], second['bytes_scanned'])
+        clock = [0.0]
+        namespace['time'] = SimpleNamespace(perf_counter=lambda: clock[0], sleep=lambda delay: None)
+        original_send = send
+
+        def delayed_command(command, timeout=None):
+            response = original_send(command, timeout)
+            clock[0] = 2
+            return response
+
+        destinations.append(131072)
+        responses.append(('7', '8'))
+        session.client.request.side_effect = delayed_command
+        calls = session.client.request.call_count
+        with self.assertRaises(TimeoutError):
+            session.query('', ['7', '8'], timeout=1)
+        self.assertEqual(session.client.request.call_count, calls + 1)
+        clock[0] = 0
+        session.client.request.side_effect = original_send
+        destinations.append(131072)
+        responses.append(('9', '10'))
+        original_read = session.probe.read
+
+        def delayed_read(kernel, handle, address, length):
+            content = original_read(kernel, handle, address, length)
+            if address != session.resident:
+                clock[0] = 2
+            return content
+
+        session.probe.read = delayed_read
+        calls = session.client.request.call_count
+        with self.assertRaises(TimeoutError):
+            session.query('', ['9', '10'], timeout=1)
+        self.assertEqual(session.client.request.call_count, calls + 1)
+        session.probe.read = original_read
+        clock[0] = 0
+        calls = session.client.request.call_count
+        session.probe.creation_time.return_value = 100
+        with self.assertRaisesRegex(RuntimeError, 'creation identity changed'):
+            session.query('', ['7', '8'])
+        self.assertEqual(session.client.request.call_count, calls)
+        client = session.client
+        session.close()
+        client.close.assert_called_once()
+        session.kernel.CloseHandle.assert_called_once_with(123)
+        self.assertIsNone(session.handle)
+
+    def test_managed_session_constructor_guards_owner_registry_and_borrowed_client_mode(self):
+        import ast
+        import ctypes
+        import time
+        from ctypes import wintypes
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        import uuid
+        source = ast.parse((MOD_ROOT / 'scripts/native-preview-check.py').read_text(encoding='utf-8'))
+        definition = next(node for node in source.body if isinstance(node, ast.ClassDef) and node.name == 'ManagedPlayerSession')
+        with tempfile.TemporaryDirectory(prefix='managed-session-constructor-') as directory:
+            root = Path(directory)
+            game = root / '.local/test-game/bin/H5_Game.exe'
+            plugin = game.parent / 'Heroes5Mods/Plugins/deployment-preview.dll'
+            plugin.parent.mkdir(parents=True)
+            game.write_bytes(b'known game')
+            plugin.write_bytes(b'known player')
+            controller = root / 'controller.exe'
+            controller.write_bytes(b'known controller')
+            record = {'owner': {'pid': 7, 'created': 99}, 'controller': str(controller),
+                      'controller_sha256': hashlib.sha256(controller.read_bytes()).hexdigest(),
+                      'installed_plugin_sha256': hashlib.sha256(plugin.read_bytes()).hexdigest()}
+            registry_version, returned_game = [2], [game]
+
+            def read(kernel, handle, address, length):
+                if address == 4096:
+                    return struct.pack('<6I', 0x42523548, registry_version[0], 472, 7, 50, 0)
+                if address == 4120:
+                    return struct.pack('<4I', 1, 6, 1048576, 8192)
+                return bytes(length)
+
+            def process_path(handle, flags, filename, length):
+                filename.value = str(returned_game[0])
+                return 1
+
+            def window_owner(window, output):
+                ctypes.cast(output, ctypes.POINTER(wintypes.DWORD)).contents.value = 7
+                return 1
+
+            kernel = SimpleNamespace(OpenProcess=Mock(return_value=123), CloseHandle=Mock(),
+                                     QueryFullProcessImageNameW=Mock(side_effect=process_path))
+            probe = SimpleNamespace(api=lambda: kernel, checked=lambda result: result, read=read,
+                                    creation_time=Mock(return_value=99),
+                                    HASHES={'H5_Game.exe': hashlib.sha256(game.read_bytes()).hexdigest()})
+            user = SimpleNamespace(GetPropW=Mock(return_value=4096),
+                GetWindowThreadProcessId=Mock(side_effect=window_owner),
+                EnumWindows=Mock(side_effect=lambda callback, unused: callback(50, 0)))
+            client = SimpleNamespace(close=Mock(), request=Mock())
+            factory = Mock(return_value=client)
+            namespace = {'ctypes': ctypes, 'wintypes': wintypes, 'Path': Path, 'hashlib': hashlib,
+                         'struct': struct, 're': re, 'time': time, 'uuid': uuid, 'sys': sys,
+                         'ROOT': root, 'DEVKIT': root / 'sdk'}
+            exec(compile(ast.Module(body=[definition], type_ignores=[]), '<managed-session-constructor>', 'exec'), namespace)
+            with patch.object(ctypes, 'WinDLL', return_value=user), patch.object(sys, 'path', list(sys.path)), \
+                    patch.dict(sys.modules, {'plugin_core': SimpleNamespace(CoreClient=factory)}):
+                session = namespace['ManagedPlayerSession'](record, root / 'client', probe)
+                self.assertEqual(factory.call_args.args[0][1], '--owned-command')
+                self.assertEqual(factory.call_args.args[0][2:4], ['7', '99'])
+                self.assertEqual(session.resident, 8192)
+                session.close()
+                client.close.assert_called_once()
+                client.request.assert_not_called()
+                factory.reset_mock()
+                returned_game[0] = root / 'foreign/H5_Game.exe'
+                with self.assertRaisesRegex(RuntimeError, 'outside its owned test game'):
+                    namespace['ManagedPlayerSession'](record, root / 'client', probe)
+                factory.assert_not_called()
+                returned_game[0] = game
+                registry_version[0] = 99
+                with self.assertRaisesRegex(RuntimeError, 'resident data is missing, ambiguous or invalid'):
+                    namespace['ManagedPlayerSession'](record, root / 'client', probe)
+                factory.assert_not_called()
+
     def test_rejected_battle_preserves_accepted_geometry_and_identity(self):
         if not vcvarsall().is_file():
             self.fail('MSVC is required for the comparison state regression')
@@ -83,7 +1113,6 @@ int main() {
             self.assertEqual(build.returncode, 0, build.stdout.decode(errors='replace') + build.stderr.decode(errors='replace'))
             result = subprocess.run([str(temporary / 'comparison_state.exe')], capture_output=True)
             self.assertEqual(result.returncode, 0, result.stdout.decode(errors='replace') + result.stderr.decode(errors='replace'))
-
 
     def test_frozen_deployment_matching_and_observed_differences(self):
         if not vcvarsall().is_file():

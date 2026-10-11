@@ -1,5 +1,6 @@
 """End-to-end WorkshopPolygon check for the compiled deployment-preview DLL."""
 import json
+import hashlib
 import os
 import argparse
 from collections import Counter
@@ -11,7 +12,9 @@ import re
 import shutil
 import subprocess
 import sys
+import struct
 import time
+import uuid
 
 
 MOD_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +36,198 @@ GAME_UI = DEVKIT / 'scripts/game-ui.ps1'
 DIAGNOSTIC = re.compile(
     r'public portraits=(\d+), model outputs=(\d+), hovered creature=(\d+), cursor cell=(\d+),(\d+), output alignment=(\d+)')
 _control_module = None
+
+
+class ManagedPlayerSession:
+    """Borrow one guarded player process; closing this client leaves it running."""
+
+    class MemoryRegion(ctypes.Structure):
+        _fields_ = [('base', ctypes.c_void_p), ('allocation', ctypes.c_void_p),
+                    ('allocation_protection', wintypes.DWORD), ('size', ctypes.c_size_t),
+                    ('state', wintypes.DWORD), ('protection', wintypes.DWORD), ('type', wintypes.DWORD)]
+
+    def __init__(self, record, directory, probe):
+        self.probe, self.kernel = probe, probe.api()
+        self.handle = self.client = None
+        self.query_regions = []
+        self.owner = record['owner']
+        if set(self.owner) != {'pid', 'created'} or any(type(value) is not int or value <= 0 for value in self.owner.values()):
+            raise ValueError('Managed session requires PID and creation identity')
+        self.game = ROOT / '.local/test-game/bin/H5_Game.exe'
+        self.plugin = self.game.parent / 'Heroes5Mods/Plugins/deployment-preview.dll'
+        if hashlib.sha256(self.game.read_bytes()).hexdigest() != probe.HASHES['H5_Game.exe']:
+            raise RuntimeError('Managed diagnostics require the pinned game executable')
+        controller = Path(record['controller']).resolve()
+        if hashlib.sha256(controller.read_bytes()).hexdigest() != record['controller_sha256']:
+            raise RuntimeError('Managed controller changed')
+        if hashlib.sha256(self.plugin.read_bytes()).hexdigest() != record['installed_plugin_sha256']:
+            raise RuntimeError('Managed installed player DLL changed')
+        try:
+            self.handle = probe.checked(self.kernel.OpenProcess(0x410, False, self.owner['pid']))
+            self.check_owner()
+            filename = ctypes.create_unicode_buffer(32768)
+            length = wintypes.DWORD(len(filename))
+            probe.checked(self.kernel.QueryFullProcessImageNameW(self.handle, 0, filename, ctypes.byref(length)))
+            if Path(filename.value).resolve() != self.game.resolve():
+                raise RuntimeError('Managed session points outside its owned test game')
+            self.user = ctypes.WinDLL('user32', use_last_error=True)
+            self.user.GetPropW.argtypes = [wintypes.HWND, wintypes.LPCWSTR]
+            self.user.GetPropW.restype = ctypes.c_void_p
+            candidates, errors = [], []
+
+            @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            def collect(window, unused):
+                process_id = wintypes.DWORD()
+                self.user.GetWindowThreadProcessId(window, ctypes.byref(process_id))
+                if process_id.value != self.owner['pid']:
+                    return True
+                registry = self.user.GetPropW(window, 'Heroes5SDK.ResidentBuffers.v1')
+                if not registry:
+                    return True
+                try:
+                    header = struct.unpack('<6I', self.read(registry, 24))
+                    if header[:5] != (0x42523548, 2, 472, self.owner['pid'], int(window)):
+                        raise RuntimeError('Managed resident registry identity changed')
+                    for index in range(16):
+                        key, schema, size, address = struct.unpack('<4I', self.read(registry + 24 + index * 28, 16))
+                        if key and schema == 6 and size == 1048576 and address:
+                            candidates.append((int(window), address))
+                except (OSError, RuntimeError, ValueError) as error:
+                    errors.append(str(error))
+                return True
+
+            if not self.user.EnumWindows(collect, 0) or errors or len(set(candidates)) != 1:
+                raise RuntimeError('Managed predictor resident data is missing, ambiguous or invalid: ' + repr(errors))
+            self.window, self.resident = candidates[0]
+            self.public_address = self.resident + 352 * 1024
+            self.comparison_address = self.resident + 336 * 1024
+            sys.path.insert(0, str(DEVKIT / 'scripts'))
+            from plugin_core import CoreClient
+            self.client = CoreClient([str(controller), '--owned-command', str(self.owner['pid']),
+                str(self.owner['created']), str(self.game.resolve()), str(self.plugin.resolve())], Path(directory))
+        except Exception:
+            self.close()
+            raise
+
+    def check_owner(self):
+        if self.probe.creation_time(self.kernel, self.handle) != self.owner['created']:
+            raise RuntimeError('Managed process creation identity changed')
+
+    def read(self, address, length):
+        self.check_owner()
+        return self.probe.read(self.kernel, self.handle, address, length)
+
+    def command(self, text, timeout=None):
+        self.check_owner()
+        response = self.client.request(text) if timeout is None else self.client.request(text, timeout=timeout)
+        if response['status'] != 0:
+            raise RuntimeError('Managed command refused: ' + repr(response))
+        return response
+
+    def screens(self):
+        word = lambda address: struct.unpack('<I', self.read(address, 4))[0]
+        head = word(0xfe719c)
+        node, result = word(head), []
+        while node != head and len(result) < 16:
+            screen = word(node + 8)
+            descriptor = word(word(word(screen) - 4) + 12)
+            result.append(self.read(descriptor + 8, 100).split(b'\0')[0].decode('ascii'))
+            node = word(node)
+        if node != head:
+            raise RuntimeError('Managed screen list is not a complete bounded chain')
+        return result
+
+    def wait_screen(self, fragment, timeout):
+        deadline = time.perf_counter() + timeout
+        while True:
+            current = self.screens()
+            if current and fragment in current[-1]:
+                return current
+            if time.perf_counter() >= deadline:
+                raise TimeoutError('Managed native phase pending; submitted action is not replayed')
+            time.sleep(0.01)
+
+    def query(self, preparation, fields, timeout=5):
+        """Read fresh stock-Lua scalars; cache only regions containing this nonce."""
+        if not fields or not 0 < timeout <= 10:
+            raise ValueError('Managed scalar query requires fields and a bounded timeout')
+        deadline = time.perf_counter() + timeout
+        nonce = 'XKIT_PLAYER_' + uuid.uuid4().hex + ':'
+        expression = "..':'..".join('(' + field + ')' for field in fields)
+        self.command('game-script ' + preparation + "SetGameVar('XKIT_PLAYER_Q','" + nonce + "'.." + expression + "..':END')",
+                     timeout=deadline - time.perf_counter())
+        baseline = struct.unpack('<I', self.read(self.resident, 4))[0]
+        while struct.unpack('<I', self.read(self.resident, 4))[0] < baseline + 3:
+            if time.perf_counter() >= deadline:
+                raise TimeoutError('Managed query frame pending; Lua is not replayed')
+            time.sleep(0.001)
+        self.kernel.VirtualQueryEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p,
+            ctypes.POINTER(self.MemoryRegion), ctypes.c_size_t]
+        self.kernel.VirtualQueryEx.restype = ctypes.c_size_t
+        scalar = rb'[A-Za-z0-9_., \-]*'
+        pattern = re.compile(re.escape(nonce.encode()) + b'(' + scalar + (b':' + scalar) * (len(fields) - 1) + rb'):END')
+        scanned, results, matched_regions = 0, set(), []
+
+        def scan_region(start, size):
+            nonlocal scanned
+            tail = b''
+            for offset in range(start, start + size, 1048576):
+                if time.perf_counter() >= deadline:
+                    raise TimeoutError('Managed scalar read exceeded its deadline; query is not replayed')
+                try:
+                    content = self.probe.read(self.kernel, self.handle, offset, min(1048576, start + size - offset))
+                except OSError:
+                    tail = b''
+                    continue
+                if time.perf_counter() >= deadline:
+                    raise TimeoutError('Managed scalar read returned after its deadline')
+                scanned += len(content)
+                combined = tail + content
+                for match in pattern.finditer(combined):
+                    results.add(tuple(match.group(1).decode('ascii').split(':')))
+                    if (start, size) not in matched_regions:
+                        matched_regions.append((start, size))
+                tail = combined[-8192:]
+
+        for start, size in self.query_regions:
+            region = self.MemoryRegion()
+            if (self.kernel.VirtualQueryEx(self.handle, start, ctypes.byref(region), ctypes.sizeof(region)) and
+                    region.base == start and region.state == 0x1000 and region.type == 0x20000 and
+                    not region.protection & 0x101 and region.protection & 255 in (4, 8, 0x40, 0x80)):
+                scan_region(start, min(size, region.size))
+        if not results:
+            address = 0
+            while address < 0x100000000:
+                if time.perf_counter() >= deadline:
+                    raise TimeoutError('Managed region enumeration exceeded its deadline')
+                region = self.MemoryRegion()
+                if not self.kernel.VirtualQueryEx(self.handle, address, ctypes.byref(region), ctypes.sizeof(region)):
+                    break
+                start, size = region.base or 0, region.size
+                if not size or start + size <= address:
+                    raise RuntimeError('Managed memory-region enumeration did not advance')
+                address = start + size
+                if (region.state == 0x1000 and region.type == 0x20000 and not region.protection & 0x101 and
+                        region.protection & 255 in (4, 8, 0x40, 0x80)):
+                    scan_region(start, min(size, 0x100000000 - start))
+        self.check_owner()
+        if time.perf_counter() >= deadline:
+            raise TimeoutError('Managed scalar result arrived after its deadline')
+        if len(results) != 1:
+            raise RuntimeError('Fresh managed scalar result is missing or ambiguous: ' +
+                repr({'matches': sorted(results), 'bytes_scanned': scanned}))
+        self.query_regions = matched_regions
+        return {'values': list(results.pop()), 'bytes_scanned': scanned, 'cached_regions': len(matched_regions)}
+
+    def close(self):
+        try:
+            if self.client:
+                self.client.close()
+        finally:
+            self.client = None
+            if self.handle:
+                self.kernel.CloseHandle(self.handle)
+                self.handle = None
 
 
 def command(*arguments, allowed=(0,)):

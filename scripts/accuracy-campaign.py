@@ -14,9 +14,10 @@ import struct
 import sys
 import shutil
 import time
+import uuid
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 import xml.etree.ElementTree as ET
-from check import source_fingerprints, verify_source_fingerprints
+from check import source_fingerprints, verify_source_fingerprints, verify_player_campaign_data, compare_player_snapshots
 
 MOD = Path(__file__).resolve().parents[1]
 os.environ.setdefault('H5_WORKSPACE', str(MOD.parents[1]))
@@ -2242,8 +2243,491 @@ def run_map(round_number, fixture, report, destination, creature_names, backgrou
         raise RuntimeError(f'Round {round_number} did not close normally')
 
 
+def read_managed_evidence(reference, directory):
+    """Read one bounded immutable record, never an entire growing history."""
+    relative = Path(reference['path'])
+    if relative.is_absolute() or relative.drive:
+        raise RuntimeError('Managed evidence reference must be relative')
+    path = (directory / relative).resolve()
+    offset, length = reference.get('offset', 0), reference['length']
+    if (relative.is_absolute() or not path.is_relative_to(directory.resolve()) or
+            type(offset) is not int or offset < 0 or type(length) is not int or not 0 < length <= 65536):
+        raise RuntimeError('Managed evidence reference leaves its directory or exceeds the record limit')
+    with path.open('rb') as stream:
+        stream.seek(offset)
+        content = stream.read(length)
+    if len(content) != length or hashlib.sha256(content).hexdigest() != reference['sha256']:
+        raise RuntimeError('Managed evidence record is missing, truncated or changed')
+    return content
+
+
+def managed_fixture_packs(root, family, fixture):
+    """Derive the full authored/nearest-town selection from the actual map."""
+    map_name = fixture['name']
+    if Path(map_name).name != map_name:
+        raise RuntimeError('Managed map identity must be a basename')
+    path = root / '.local/test-game/Maps' / (map_name + '.h5m')
+    if sha256(path) != fixture['map_sha256']:
+        raise RuntimeError('Managed map changed after capture')
+    with ZipFile(path) as archive:
+        maps = [name for name in archive.namelist() if name.endswith('/map.xdb')]
+        if len(maps) != 1:
+            raise RuntimeError('Managed fixture must contain exactly one map description')
+        document = ET.fromstring(archive.read(maps[0]))
+    monsters = list(document.iter('AdvMapMonster'))
+    if family == 'polygon':
+        selected = [monster for monster in monsters if re.fullmatch(r'pack_(?:0|[1-9][0-9]*)', monster.findtext('Name', ''))]
+        selected.sort(key=lambda monster: int(monster.findtext('Name').split('_')[1]))
+    else:
+        source_name = fixture['source_name']
+        if Path(source_name).name != source_name or sha256(root / '.local/test-game/Maps' / source_name) != fixture['source_sha256']:
+            raise RuntimeError('Managed RMG source changed or has an invalid identity')
+        with ZipFile(root / '.local/test-game/Maps' / source_name) as original, ZipFile(path) as tagged:
+            original_maps = [name for name in original.namelist() if name.endswith('/map.xdb')]
+            if len(original_maps) != 1:
+                raise RuntimeError('Managed RMG source must contain exactly one map description')
+            original_name = original_maps[0]
+            original_identifier, tagged_identifier = original_name.split('/')[2], maps[0].split('/')[2]
+            original_document = ET.fromstring(original.read(original_name))
+            original_monsters = list(original_document.iter('AdvMapMonster'))
+            if len(original_monsters) != len(monsters):
+                raise RuntimeError('Managed tagged RMG changed the original monster roster')
+
+            def preserved_monster(monster, identifier):
+                copied = ET.fromstring(ET.tostring(monster))
+                for child in list(copied):
+                    if child.tag in ('Name', 'CombatScript', 'Courage', 'AllowQuickCombat'):
+                        copied.remove(child)
+                return ET.canonicalize(ET.tostring(copied, encoding='unicode').replace(identifier, original_identifier),
+                                       strip_text=True)
+
+            for source_monster, tagged_monster in zip(original_monsters, monsters):
+                if preserved_monster(source_monster, original_identifier) != preserved_monster(tagged_monster, tagged_identifier):
+                    raise RuntimeError('Managed tagged RMG changed original monster armies or positions')
+            for member in original.namelist():
+                if member == original_name:
+                    continue
+                renamed = member.replace(original_identifier, tagged_identifier)
+                expected = original.read(member).replace(original_identifier.encode(), tagged_identifier.encode())
+                if renamed not in tagged.namelist() or tagged.read(renamed) != expected:
+                    raise RuntimeError('Managed tagged RMG changed an original source resource')
+        towns = [(int(town.findtext('Pos/x')), int(town.findtext('Pos/y'))) for town in original_document.iter('AdvMapTown')]
+        tagged_towns = [(int(town.findtext('Pos/x')), int(town.findtext('Pos/y'))) for town in document.iter('AdvMapTown')]
+        if towns != tagged_towns:
+            raise RuntimeError('Managed tagged RMG changed original town positions used for selection')
+        if not towns:
+            raise RuntimeError('Managed RMG fixture lacks towns for deterministic pack selection')
+        indices = []
+        for count in range(1, 5):
+            candidates = [(min(abs(int(monster.findtext('Pos/x')) - x) + abs(int(monster.findtext('Pos/y')) - y)
+                               for x, y in towns), index)
+                          for index, monster in enumerate(monsters)
+                          if 1 + len(monster.findall('AdditionalStacks/Item')) == count]
+            indices.extend(index for _, index in sorted(candidates)[:6])
+        selected = [monsters[index] for index in sorted(indices)]
+    packs = [{'name': monster.findtext('Name'), 'public_count': 1 + len(monster.findall('AdditionalStacks/Item'))}
+             for monster in selected]
+    if family != 'polygon' and any(not re.fullmatch(r'rmg_' + family[-1] + r'_[0-9]{3,}', pack['name'] or '') for pack in packs):
+        raise RuntimeError('Managed tagged RMG belongs to another family')
+    if not packs or [(pack['name'], pack['public_count']) for pack in fixture['packs']] != [
+            (pack['name'], pack['public_count']) for pack in packs]:
+        raise RuntimeError('Managed fixture declaration omits or changes selected packs')
+    return {**fixture, 'packs': packs}
+
+
+def read_managed_army(session, hero, timeout=5):
+    """Read distinct creature types and aggregate counts, never hidden neutrals."""
+    if not re.fullmatch(r'[A-Za-z0-9_]{1,70}', hero):
+        raise ValueError('Managed army requires a command-addressable hero')
+    deadline = time.perf_counter() + timeout
+    slots = ('a', 'b', 'c', 'd', 'e', 'f', 'g')
+    fields = [slot + ' or 0' for slot in slots]
+    fields += [f"({slot} and {slot}>0 and GetHeroCreatures('{hero}',{slot}) or 0)" for slot in slots]
+    fields += [f"GetObjectOwner('{hero}')", 'GetCurrentPlayer()']
+    values = session.query(f"local a,b,c,d,e,f,g=GetHeroCreaturesTypes('{hero}');", fields,
+                           timeout=min(10, timeout))['values']
+    if values[-2] != values[-1] or not 1 <= int(values[-1]) <= 8:
+        raise RuntimeError('Managed army hero is not owned by the current player')
+    army = {}
+    for kind, count in zip(map(int, values[:7]), map(int, values[7:14])):
+        if kind == count == 0:
+            continue
+        if not 1 <= kind <= 1024 or not 1 <= count <= 1000000 or army.get(kind, count) != count:
+            raise RuntimeError('Managed hero army has invalid or inconsistent slot values')
+        army[kind] = count
+    if time.perf_counter() >= deadline or not army:
+        raise RuntimeError('Managed army readback is late or has invalid quantities')
+    return army
+
+
+def set_managed_army(session, hero, target, timeout=30):
+    """Preserve an anchor stack; submit each delta once and poll the whole army."""
+    if (not 0 < timeout <= 50 or not isinstance(target, dict) or not 1 <= len(target) <= 7 or
+            any(type(kind) is not int or not 1 <= kind <= 1024 or type(count) is not int or
+                not 1 <= count <= 1000000 for kind, count in target.items())):
+        raise ValueError('Managed target army requires one to seven positive creature counts')
+    deadline = time.perf_counter() + timeout
+    def remaining():
+        budget = deadline - time.perf_counter()
+        if budget <= 0:
+            raise TimeoutError('Managed army setup pending; mutations are not replayed')
+        return budget
+
+    current = read_managed_army(session, hero, min(10, remaining()))
+    def change(kind, count):
+        nonlocal current
+        previous = current.get(kind, 0)
+        if previous == count:
+            return
+        expected = dict(current)
+        if count:
+            expected[kind] = count
+        else:
+            expected.pop(kind, None)
+        operation = 'AddHeroCreatures' if count > previous else 'RemoveHeroCreatures'
+        session.command(f"game-script if GetObjectOwner('{hero}')==GetCurrentPlayer() then "
+                        f"{operation}('{hero}',{kind},{abs(count-previous)});end", timeout=remaining())
+        while True:
+            observed = read_managed_army(session, hero, min(10, remaining()))
+            remaining()
+            if observed == expected:
+                current = observed
+                return
+            time.sleep(min(0.01, remaining()))
+
+    common = sorted(set(current) & set(target))
+    anchor = common[0] if common else min(current)
+    for kind in list(current):
+        if kind not in target and kind != anchor:
+            change(kind, 0)
+    if not common:
+        # First free space, then observe a real replacement before removing
+        # the last original type. Engine removal clamps an otherwise empty hero.
+        change(min(target), target[min(target)])
+        change(anchor, 0)
+    for kind, count in sorted(target.items()):
+        change(kind, count)
+    observed = read_managed_army(session, hero, min(10, remaining()))
+    remaining()
+    if observed != target:
+        raise RuntimeError('Managed complete army differs from the requested profile')
+    return observed
+
+
+def write_managed_evidence(path, content, directory):
+    """Create one durable immutable blob; never replace an earlier observation."""
+    relative = path.resolve().relative_to(directory.resolve()).as_posix()
+    if not content or len(content) > 65536:
+        raise ValueError('Managed evidence must be nonempty and bounded')
+    with path.open('xb') as output:
+        output.write(content)
+        output.flush()
+        os.fsync(output.fileno())
+    return {'path': relative, 'offset': 0, 'length': len(content),
+            'sha256': hashlib.sha256(content).hexdigest()}
+
+
+def capture_managed_battle(session, directory, pack, generation, timeout=8):
+    """Capture an already submitted encounter once, including its confirmed return."""
+    if type(generation) is not int or generation <= 0 or not 0 < timeout <= 30:
+        raise ValueError('Managed capture requires a positive generation and bounded deadline')
+    if not re.fullmatch(r'[A-Za-z0-9_]{1,70}', pack):
+        raise ValueError('Managed capture requires a command-addressable pack')
+    identity = f"{session.owner['pid']}-{session.owner['created']}-{generation}"
+    battle_directory = directory / identity
+    battle_directory.mkdir(parents=False, exist_ok=False)
+    battle = {'id': identity, 'owner': dict(session.owner), 'pack': pack,
+              'generation': generation, 'clock': 'perf_counter_ns'}
+    with (battle_directory / 'events.jsonl').open('xb') as journal:
+        def append(record):
+            content = (json.dumps(record, separators=(',', ':')) + '\n').encode('utf-8')
+            if len(content) > 65536:
+                raise ValueError('Managed battle journal record exceeds evidence bound')
+            offset = journal.tell()
+            journal.write(content)
+            journal.flush()
+            os.fsync(journal.fileno())
+            return {'path': (battle_directory / 'events.jsonl').relative_to(directory).as_posix(),
+                    'offset': offset, 'length': len(content), 'sha256': hashlib.sha256(content).hexdigest()}
+
+        def snapshot(committed):
+            deadline = time.perf_counter() + timeout
+            while True:
+                before = session.read(session.comparison_address + 28, 4)
+                public = session.read(session.public_address, 1280)
+                context = session.read(session.comparison_address, 3024)
+                after = session.read(session.comparison_address + 28, 4)
+                if time.perf_counter() >= deadline:
+                    raise TimeoutError('Managed capture pending; submitted actions are not replayed')
+                if before == after and not struct.unpack('<I', before)[0] & 1:
+                    if committed:
+                        player = struct.unpack_from('<8I', context, 1616)
+                        ready = player[:3] == (1, generation, 1) and player[6] == 1
+                    else:
+                        reference = struct.unpack_from('<5I', context, 2192)
+                        ready = (reference[:2] == (generation, 1) and reference[2] > 0 and
+                                 1 <= reference[3] <= 7 and reference[4] == 1 and
+                                 struct.unpack_from('<I', public, 4)[0] == generation and
+                                 struct.unpack_from('<2I', context, 1616) != (1, generation))
+                    if ready:
+                        session.check_owner()
+                        return public, context
+                time.sleep(0.005)
+
+        try:
+            append({'stage': 'capture_started', 'time_ns': time.perf_counter_ns(),
+                    'owner': battle['owner'], 'generation': generation, 'pack': pack})
+            public, context = snapshot(False)
+            count = struct.unpack_from('<I', context, 2204)[0]
+            reference = context[2192:2212 + count * 52]
+            battle['public_before'] = write_managed_evidence(battle_directory / 'public-before.bin', public, directory)
+            battle['reference_before'] = write_managed_evidence(battle_directory / 'reference-before.bin', reference, directory)
+            battle['before_start_ns'] = time.perf_counter_ns()
+            append({'stage': 'frozen_before_start', 'time_ns': battle['before_start_ns'],
+                    'public_before': battle['public_before'], 'reference_before': battle['reference_before']})
+            # No Start before both exclusive files and the journal are flushed.
+            battle['start_ns'] = time.perf_counter_ns()
+            append({'stage': 'start_submitted', 'time_ns': battle['start_ns']})
+            session.command('game-event confirm_placement', timeout=timeout)
+            _, actual = snapshot(True)
+            battle['after_start_ns'] = time.perf_counter_ns()
+            battle['committed_after'] = write_managed_evidence(battle_directory / 'committed-after.bin', actual, directory)
+            comparison = compare_player_snapshots(public, reference, actual, generation)
+            if not comparison['reference_full_match']:
+                raise ValueError('Full placement reference differs from initial facts; evidence retained')
+            battle['explanation'] = {'status': 'verified_actual_placement', 'scope': 'actual_placement',
+                'reference_sha256': battle['reference_before']['sha256'],
+                'orders': [row[3] for row in comparison['reference_decisions']],
+                'reason': 'Verified initial placement; per-stack rule, order and phase retained in reference_before.'}
+            phase = session.screens()
+            if not phase or 'CombatArenaScreen' not in phase[-1]:
+                raise RuntimeError('Managed capture requires the owned battle before Finish')
+            append({'stage': 'finish_submitted', 'time_ns': time.perf_counter_ns()})
+            session.command('game-script Finish(0)', timeout=timeout)
+            session.wait_screen('CCombatResults', timeout)
+            append({'stage': 'results_confirmed', 'time_ns': time.perf_counter_ns()})
+            session.command('game-event enter_pressed', timeout=timeout)
+            session.wait_screen('AdventureScreen', timeout)
+            session.check_owner()
+            battle['return'] = {'owner': dict(session.owner), 'generation': generation,
+                                'phase': 'adventure', 'time_ns': time.perf_counter_ns()}
+            return battle, append(battle), comparison
+        except Exception as error:
+            append({'stage': 'failed', 'time_ns': time.perf_counter_ns(),
+                    'error': type(error).__name__ + ': ' + str(error), 'partial_battle': battle})
+            raise
+
+
+def managed_helper_fingerprints():
+    helpers = {'driver': Path(__file__), 'comparison': MOD / 'scripts/check.py',
+               'transport': MOD / 'scripts/native-preview-check.py',
+               'probe': check.PROBE, 'core_client': check.DEVKIT / 'scripts/plugin_core.py',
+               'controller_source': check.DEVKIT / 'native/plugin_bridge_client.cpp'}
+    return {name: sha256(filename) for name, filename in helpers.items()}
+
+
+def verify_managed_artifacts(report, path):
+    """Preflight the same final artifacts before a producer submits game actions."""
+    verify_source_fingerprints(report)
+    if check.DEVKIT != (MOD / 'devkit').resolve():
+        raise RuntimeError('Final managed accuracy evidence must use the pinned devkit checkout')
+    root = check.ROOT
+    package = Path(report['package']['path']).resolve()
+    if sha256(package) != report['package']['sha256']:
+        raise RuntimeError('Managed player archive changed')
+    files = {'plugin_sha256': 'bin/Heroes5Mods/Plugins/deployment-preview.dll',
+             'loader_sha256': 'bin/dinput8.dll', 'graphics_facade_sha256': 'bin/d3d9.dll'}
+    with ZipFile(package) as archive:
+        if len(archive.namelist()) != len(set(archive.namelist())) or archive.testzip() is not None:
+            raise RuntimeError('Managed player archive has duplicate or damaged entries')
+        manifest = json.loads(archive.read('release.json'))
+        verify_source_fingerprints(manifest)
+        if manifest.get('bridge_source_sha256') != sha256(check.DEVKIT / 'native/plugin_bridge.cpp'):
+            raise RuntimeError('Managed player archive has a stale shared runtime')
+        for key, member in files.items():
+            expected = manifest[key]
+            if hashlib.sha256(archive.read(member)).hexdigest() != expected or sha256(root / '.local/test-game' / member) != expected:
+                raise RuntimeError('Managed archived and installed player files differ: ' + member)
+    if report.get('active_payload_sha256') != manifest['plugin_sha256']:
+        raise RuntimeError('Managed evidence is not from the final archived player DLL')
+    if sha256(root / '.local/test-game/bin/d3d9.universe.dll') != manifest['graphics_original_sha256']:
+        raise RuntimeError('Managed retained Universe graphics dependency changed')
+    if report.get('helper_sha256') != managed_helper_fingerprints():
+        raise RuntimeError('Managed campaign producer or helper sources changed')
+    if report.get('game_exe_sha256') != sha256(root / '.local/test-game/bin/H5_Game.exe'):
+        raise RuntimeError('Managed game executable changed')
+    read_evidence = lambda reference: read_managed_evidence(reference, path.parent)
+    startup = json.loads(read_evidence(report['ordinary_startup']))
+    if (startup.get('passed') is not True or startup.get('owner') != report['owner'] or
+            startup.get('archive_sha256') != report['package']['sha256'] or
+            startup.get('plugin_sha256') != manifest['plugin_sha256'] or startup.get('automatic_install_status') != 2 or
+            startup.get('launch_flags') != 0 or startup.get('startup_memory_patches') != [] or
+            startup.get('developer_controller_attached_before_acceptance') is not False):
+        raise RuntimeError('Managed campaign lacks matching ordinary player startup acceptance')
+    fixtures = report.get('fixtures', {})
+    if set(fixtures) != {'polygon', 'rmg_a', 'rmg_b'}:
+        raise RuntimeError('Managed campaign lacks the declared three map families')
+    fixtures = {family: managed_fixture_packs(root, family, fixture) for family, fixture in fixtures.items()}
+    return fixtures, read_evidence
+
+
+def verify_managed_report(report, path):
+    fixtures, read_evidence = verify_managed_artifacts(report, path)
+    summary = verify_player_campaign_data(report, fixtures, read_evidence)
+    print(f"Managed accuracy passed: {summary['mixed_full_matches']}/{summary['mixed_battles']} mixed formations; "
+          f"full reference {summary['reference_full_matches']}/{summary['battles']} across ten loads")
+    return summary
+
+
+def run_managed_campaign(session_path):
+    """Run the declared rotation in one borrowed, already accepted player session."""
+    from game_launch import map_arguments
+    started = time.perf_counter()
+    configuration = json.loads(session_path.read_text(encoding='utf-8'))
+    check.ROOT = Path(configuration['workspace']).resolve()
+    report = {**configuration['report'], **source_fingerprints(),
+              'schema': 2, 'transport': 'managed_owned_session', 'mode': 'normal_public_prediction',
+              'owner': dict(configuration['owner']), 'requested_rounds': 10, 'runs': [],
+              'helper_sha256': managed_helper_fingerprints(),
+              'game_exe_sha256': sha256(check.ROOT / '.local/test-game/bin/H5_Game.exe')}
+    # Artifact admission precedes attachment or any game action. In particular,
+    # an old installed host plus a newer HMR body cannot certify a final ZIP.
+    fixtures, read_seed = verify_managed_artifacts(report, session_path)
+    if configuration['installed_plugin_sha256'] != report['active_payload_sha256']:
+        raise RuntimeError('Managed controller identity differs from the admitted final player DLL')
+    directory = MOD / '.local' / ('managed-accuracy-' + uuid.uuid4().hex)
+    directory.mkdir(parents=True, exist_ok=False)
+    target = directory / 'report.json'
+    report.pop('error', None)
+    report.pop('acceptance', None)
+    report['ordinary_startup'] = write_managed_evidence(directory / 'ordinary-startup.json',
+        read_seed(report['ordinary_startup']), directory)
+    session = None
+    total = full = mixed_total = mixed_full = reference_full = 0
+    try:
+        session = check.ManagedPlayerSession(configuration, directory, probe)
+        profiles = {0: {'CREATURE_ARCHER': 100}, 3: {'CREATURE_PEASANT': 1000}, 6: {'CREATURE_ANGEL': 10},
+                    9: {'CREATURE_GOBLIN': 100, 'CREATURE_SHAMAN_WITCH': 10, 'CREATURE_CYCLOP_UNTAMED': 3,
+                        'CREATURE_ARCHER': 100, 'CREATURE_GRAND_ELF': 50, 'CREATURE_UNICORN': 10, 'CREATURE_PIT_FIEND': 8}}
+        for index in range(10):
+            family = ('polygon', 'rmg_a', 'rmg_b')[index % 3]
+            fixture = fixtures[family]
+            phase = session.screens()
+            if not phase or not any(name in phase[-1] for name in ('CMainMenuScreen', 'AdventureScreen', 'CombatArenaScreen')):
+                raise RuntimeError('Managed campaign cannot enter a new map from the current native phase')
+            # A confirmed menu prevents an old AdventureScreen from being
+            # mistaken for completion of a fresh advmap request.
+            session.command('console mainmenu')
+            session.wait_screen('CMainMenuScreen', 15)
+            session.command('console setvar pwl_press_any_key_enabled = 0')
+            submitted = time.perf_counter_ns()
+            session.command('console advmap ' + map_arguments(session.game.parent.parent, fixture['name'])[1])
+            session.wait_screen('AdventureScreen', 30)
+            roster = session.query('', ['GetAllNames(0)'])['values'][0].split()
+            if family == 'polygon':
+                if 'Brem' not in roster:
+                    raise RuntimeError('Managed authored fixture lacks its declared Brem control hero')
+                roster = ['Brem']
+            hero = None
+            for name in roster:
+                if not re.fullmatch(r'[A-Za-z0-9_]{1,70}', name):
+                    raise RuntimeError('Managed map contains an unsupported hero identifier')
+                ownership = session.query('', [f"GetObjectOwner('{name}')", 'GetCurrentPlayer()'])['values']
+                if ownership[0] == ownership[1] and 1 <= int(ownership[1]) <= 8:
+                    hero = name
+                    break
+            if hero is None:
+                raise RuntimeError('Managed map has no command-addressable owned hero')
+            starting_army = read_managed_army(session, hero)
+            profile = profiles.get(index)
+            if profile:
+                names = list(profile)
+                kinds = list(map(int, session.query('', names)['values']))
+                if len(set(kinds)) != len(names):
+                    raise RuntimeError('Managed profile creature constants are missing or ambiguous')
+                army = dict(zip(kinds, profile.values()))
+            else:
+                army = starting_army
+            ready = time.perf_counter_ns()
+            run = {'round': index + 1, 'family': family, 'map': fixture['name'], 'hero': hero,
+                   'own_army_profile': army, 'army_scope': 'aggregate quantities, not slot splitting',
+                   'load': {'owner': dict(session.owner), 'token': uuid.uuid4().hex,
+                            'status': 'ready', 'phase': 'adventure', 'submitted_ns': submitted,
+                            'ready_ns': ready, 'map_sha256': fixture['map_sha256']}, 'battles': []}
+            report['runs'].append(run)
+            for pack in fixture['packs']:
+                set_managed_army(session, hero, army)
+                name = pack['name']
+                if not re.fullmatch(r'[A-Za-z0-9_]{1,70}', name):
+                    raise RuntimeError('Managed fixture contains an unsupported pack identifier')
+                values = session.query(f"local x,y,z=GetObjectPosition('{name}');", ['x', 'y', 'z'])['values']
+                x, y, floor = map(int, values)
+                if not 0 <= x <= 1024 or not 1 <= y <= 1024 or floor not in (0, 1):
+                    raise RuntimeError('Managed encounter position is outside the admitted map bounds')
+                baseline = struct.unpack('<I', session.read(session.public_address + 4, 4))[0]
+                session.command(f"game-script if GetObjectOwner('{hero}')==GetCurrentPlayer() then "
+                                f"SetObjectPosition('{hero}',{x},{y-1},{floor},0);end")
+                deadline = time.perf_counter() + 8
+                while True:
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0:
+                        raise TimeoutError('Managed teleport pending; mutation is not replayed')
+                    position = session.query(f"local x,y,z=GetObjectPosition('{hero}');", ['x', 'y', 'z'],
+                                             timeout=min(10, remaining))['values']
+                    if time.perf_counter() >= deadline:
+                        raise TimeoutError('Managed teleport readback arrived after its deadline')
+                    if list(map(int, position)) == [x, y - 1, floor]:
+                        break
+                session.command(f"game-script if GetObjectOwner('{hero}')==GetCurrentPlayer() then "
+                                f"MakeHeroInteractWithObject('{hero}','{name}');end")
+                battle, reference, comparison = capture_managed_battle(session, directory, name, baseline + 1)
+                run['battles'].append(reference)
+                total += 1
+                full += comparison['position_full_match']
+                reference_full += comparison['reference_full_match']
+                if pack['public_count'] > 1:
+                    mixed_total += 1
+                    mixed_full += comparison['position_full_match']
+                save({'owner': dict(session.owner), 'round': index + 1, 'family': family,
+                      'pack': name, 'generation': battle['generation'], 'completed_battles': total,
+                      'elapsed_seconds': time.perf_counter() - started}, directory / 'current.json')
+            run['completion'] = {'owner': dict(session.owner), 'phase': 'adventure',
+                                 'generation': battle['generation'], 'time_ns': time.perf_counter_ns()}
+        accepted = mixed_total > 0 and mixed_full * 10 >= mixed_total * 7 and reference_full == total
+        report['acceptance'] = {'battles': total, 'full_matches': full, 'mixed_battles': mixed_total,
+                               'mixed_full_matches': mixed_full, 'reference_full_matches': reference_full,
+                               'solo_battles': total - mixed_total, 'solo_full_matches': full - mixed_full,
+                               'passed': accepted}
+        report['elapsed_seconds'] = time.perf_counter() - started
+        save(report, target)
+        verify_managed_report(report, target)
+        closing, session = session, None
+        closing.close()
+        # Publish only an independently verified complete campaign; partial or
+        # failed runs cannot replace the last accepted pointer.
+        save({'schema': 1, 'workspace': str(check.ROOT), 'report': str(target), 'sha256': sha256(target)},
+             MOD / '.local/managed-accuracy-latest.json')
+        return target
+    except Exception as error:
+        report['error'] = type(error).__name__ + ': ' + str(error)
+        report['elapsed_seconds'] = time.perf_counter() - started
+        save(report, target)
+        raise
+    finally:
+        if session is not None:
+            closing, session = session, None
+            try:
+                closing.close()
+            except Exception as error:
+                report['cleanup_error'] = type(error).__name__ + ': ' + str(error)
+                save(report, target)
+                raise
+
+
 def verify_report(path):
     report = json.loads(path.read_text(encoding='utf-8'))
+    if report.get('transport') == 'managed_owned_session':
+        return verify_managed_report(report, path)
     verify_source_fingerprints(report)
     if report.get('mode') != 'normal_public_prediction':
         raise RuntimeError('Only a normal public-input campaign can pass the player pre-push gate')
@@ -2318,6 +2802,21 @@ def verify_report(path):
           f'overall {full}/{total} across ten map loads')
 
 
+def verify_latest_managed_report(pointer):
+    record = json.loads(pointer.read_text(encoding='utf-8'))
+    if record.get('schema') != 1:
+        raise RuntimeError('Unsupported managed accuracy pointer')
+    target = Path(record['report']).resolve()
+    target.relative_to((MOD / '.local').resolve())
+    if sha256(target) != record['sha256']:
+        raise RuntimeError('Managed accuracy report changed after verification')
+    check.ROOT = Path(record['workspace']).resolve()
+    report = json.loads(target.read_text(encoding='utf-8'))
+    if report.get('transport') != 'managed_owned_session':
+        raise RuntimeError('Managed accuracy pointer cannot select legacy evidence')
+    return verify_managed_report(report, target)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--rounds', type=int, default=10, choices=range(1, 11),
@@ -2336,6 +2835,8 @@ def main():
                         metavar='ID', help='Grant skills in order; repeat base skills for mastery upgrades.')
     parser.add_argument('--verify-latest', action='store_true',
                         help='Read-only pre-push gate for the newest ten-load rotation JSON.')
+    parser.add_argument('--managed-session', type=Path,
+                        help='Run final ten-map acceptance using an already accepted owned player session JSON.')
     parser.add_argument('--superadmin-source', action='store_true',
                         help='Explicit developer-only pre-Start hidden source trace; no exact admin prediction yet.')
     parser.add_argument('--background', action='store_true',
@@ -2343,7 +2844,18 @@ def main():
     parser.add_argument('--sdk-runtime', action='store_true',
                         help='Use the sealed SDK launch gate and owned graphics compatibility chain.')
     args = parser.parse_args()
+    if args.managed_session:
+        if (args.verify_latest or args.rounds != 10 or args.map or args.only_pack or args.smoke_packs or
+                args.hero_bear_count or args.hero_army or args.hero or args.hero_skill or
+                args.superadmin_source or args.background or args.sdk_runtime):
+            parser.error('--managed-session is the complete player campaign and cannot combine with legacy controls')
+        print(run_managed_campaign(args.managed_session.resolve()))
+        return
     if args.verify_latest:
+        pointer = MOD / '.local/managed-accuracy-latest.json'
+        if os.path.lexists(pointer):
+            verify_latest_managed_report(pointer)
+            return
         candidates = sorted((check.ROOT / '.local/test-state').glob('accuracy-campaign-*-rotation.json'))
         if not candidates:
             raise RuntimeError('No completed ten-map accuracy campaign; run this script without --verify-latest')
