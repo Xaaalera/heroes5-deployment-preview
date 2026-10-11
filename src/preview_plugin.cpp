@@ -4,8 +4,12 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include "placement_calculations.hpp"
+#include "deployment_comparison.hpp"
+#include "../game-api/include/h5/actor_input.hpp"
 
 namespace {
+using namespace h5_preview;
 
 constexpr uintptr_t kRendererEntry = h5::hooks::PlacementRenderer.address;
 constexpr uintptr_t kRendererResume = h5::hooks::PlacementRenderer.Resume();
@@ -44,7 +48,10 @@ volatile LONG g_publicCount = 0;
 uint32_t g_publicTypes[7]{};
 uint32_t g_orderedPublicTypes[7]{};
 uint32_t g_publicBands[7]{};
+uint32_t g_publicKnownCounts[7]{};
+wchar_t g_publicQuantityLabels[7][32]{};
 bool g_superadminEnabled = false;
+bool g_neutralTypesUnknown = false;
 bool g_useSpreadRows = false;
 uint32_t g_estimatedSpreadDenominator = 0;
 int32_t g_knownHeroAttack = -1;
@@ -84,19 +91,8 @@ void* g_originalTooltipSource = nullptr;
 void* g_placementOwner = nullptr;
 void* g_root = nullptr;
 void* g_grid = nullptr;
-struct FrozenActorInput {
-    uint32_t world, army, source, type, quantity, damage;
-    int32_t attack, defence, health;
-    float initiative, atb;
-    int32_t morale, luck, speed;
-    uint32_t category, eligible, skipSpeed, selected, retaliationBonus, controlWord;
-    uint32_t aggregateIdentity, unsupported, specialCategory, attackGeneration;
-    uint32_t rangedCapability, ignoreWhenNoRanged, armySize;
-    int32_t counterMaximum[3], counterCurrent[3];
-    uint32_t healthTransformFlags, healthScaleBits[2];
-};
-static_assert(sizeof(FrozenActorInput) == 144, "Primitive input trace layout");
-constexpr uint32_t kActorInputCapacity = 256;
+using FrozenActorInput = h5::army::ActorInput;
+constexpr uint32_t kActorInputCapacity = h5_preview::PlacementActorInputCapacity;
 FrozenActorInput g_actorInputs[kActorInputCapacity]{};
 volatile LONG g_actorInputSequence = 0;
 volatile LONG g_actorInputCount = 0;
@@ -110,23 +106,13 @@ uint32_t g_actorCoreStackCounts[2]{};
 uint32_t g_actorCoreWords[2][18]{};
 uint32_t g_actorCoreInputEnds[2]{};
 uint32_t g_strategyTrace[10]{};
-struct FrozenHeroCorrection {
-    uint32_t aggregateIdentity, inputCount;
-    int32_t firstScalar, secondScalar;
-    uint32_t controlWord, attackGeneration;
-};
-static_assert(sizeof(FrozenHeroCorrection) == 24, "Hero correction trace layout");
-FrozenHeroCorrection g_heroCorrections[64]{};
+using FrozenHeroCorrection = h5::army::HeroCorrectionInput;
+FrozenHeroCorrection g_heroCorrections[h5_preview::PlacementHeroCorrectionCapacity]{};
 uint32_t g_heroCorrectionCount = 0;
 uint32_t g_heroCorrectionOverflow = 0;
 uint32_t g_heroCorrectionMask = 0;
-struct FrozenAuxiliaryPower {
-    uint32_t aggregateIdentity, inputCount;
-    int32_t value;
-    uint32_t caller, controlWord, attackGeneration;
-};
-static_assert(sizeof(FrozenAuxiliaryPower) == 24, "Auxiliary input trace layout");
-FrozenAuxiliaryPower g_auxiliaryInputs[256]{};
+using FrozenAuxiliaryPower = h5::army::AuxiliaryPowerInput;
+FrozenAuxiliaryPower g_auxiliaryInputs[h5_preview::PlacementAuxiliaryInputCapacity]{};
 uint32_t g_auxiliaryInputCount = 0;
 uint32_t g_auxiliaryInputOverflow = 0;
 uint32_t g_auxiliaryMask = 0;
@@ -174,7 +160,25 @@ uint32_t* g_tooltipController = nullptr;
 void ResetProjectionTooltipChoices();
 unsigned PublicTooltipVariants(uint32_t base, uint32_t* variants);
 int HoveredProjectionSlot();
-void ProcessProjectionDetails();
+void ProcessProjectionDetails(bool installRotatorCallbacks = true);
+uint32_t PublicQuantityEstimate(uint32_t index, bool lowerBound);
+
+void CopyRenderedQuantityLabels(wchar_t (&labels)[7][32]) {
+    memset(labels, 0, sizeof(labels));
+    const uint32_t renderedCount = *reinterpret_cast<const uint32_t*>(g_outputStorage + 8 + 496);
+    if (g_neutralTypesUnknown || g_publicCount < 1 || g_publicCount > 7 || renderedCount > 7) { return; }
+    const auto* sourceToSorted = reinterpret_cast<const uint32_t*>(g_outputStorage + 8 + 924);
+    const auto* renderedToSorted = reinterpret_cast<const uint32_t*>(g_outputStorage + 8 + 1368);
+    for (uint32_t destination = 0; destination < renderedCount; ++destination) {
+        if (renderedToSorted[destination] >= 7) { continue; }
+        for (LONG source = 0; source < g_publicCount; ++source) {
+            if (sourceToSorted[source] == renderedToSorted[destination]) {
+                memcpy(labels[destination], g_publicQuantityLabels[source], sizeof(labels[destination]));
+                break;
+            }
+        }
+    }
+}
 int PublicPlacementRole(uint32_t type);
 bool __fastcall PublicPlacementPairBefore(const int* left, const int* right);
 bool ExcludeWeakestProjection();
@@ -188,10 +192,14 @@ LONG g_detailsGeneration = -1;
 int g_detailsPoint[2]{};
 bool g_detailsHitTest = false;
 uint32_t* g_detailsRotator = nullptr;
+bool g_detailsRotatorOwned = false;
+// Borrowed native binding, reconstructed by the adapter for every operation.
+// Its immutable game-only methods live until process exit, independently of DLLs.
+const uint32_t* g_detailsNativeMethods = nullptr;
 unsigned g_detailsProjectionSlot = 7;
 LONG g_detailsRotatorGeneration = -1;
 
-LRESULT CALLBACK ProjectionWindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+void ObserveProjectionWindowInput(UINT message, LPARAM lparam) {
     if ((message == WM_LBUTTONDBLCLK || g_detailsSlot >= 0) && g_projectionScreen != nullptr) {
         if (!reinterpret_cast<bool (__thiscall*)(void*)>(0x669e10)(g_projectionScreen)) {
             g_detailsSlot = -1;
@@ -205,6 +213,10 @@ LRESULT CALLBACK ProjectionWindowProc(HWND window, UINT message, WPARAM wparam, 
             }
         }
     }
+}
+
+LRESULT CALLBACK ProjectionWindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    ObserveProjectionWindowInput(message,lparam);
     return CallWindowProcW(g_originalGameWindowProc, window, message, wparam, lparam);
 }
 
@@ -347,559 +359,14 @@ void UpdateProjectionGlows() {
     }
 }
 
-// Source-army strength is a different calculation from the combat aggregate.
-// Inputs are primitive source statistics/definition deltas and loaded settings;
-// this helper never queries engine decisions or final battle descriptors.
-struct SourceStrengthInput {
-    int baseValue, quantity, deltas[6], modifierA, modifierB;
-    uint32_t initiativeBits[3]; // Low 10 bytes are the getter's x87 value.
-    int baseInitiative;
-    bool shooterBonus, modifierPenalty;
-    float coefficients[11];
-    double baseScale, one;
-};
-static_assert(sizeof(SourceStrengthInput) == 120, "Source strength primitive layout");
-
-int64_t CalculateSourceStrength(const SourceStrengthInput& input) {
-    int64_t value;
-    const int base = input.baseValue < 1 ? 1 : input.baseValue;
-    const double scale = input.baseScale, one = input.one;
-    unsigned short controlWord, conversionWord;
-    __asm {
-        fnstcw controlWord
-        mov ax, controlWord
-        or ax, 0x0c00
-        mov conversionWord, ax
-        fild base
-        fmul scale
-        fldcw conversionWord
-        fistp value
-        fldcw controlWord
-    }
-    if (input.shooterBonus) {
-        const uint64_t product = static_cast<uint64_t>(value) * 140u;
-        value = static_cast<int64_t>(product) / 100;
-    }
-    for (unsigned index = 0; index < 6; ++index) {
-        const int delta = input.deltas[index];
-        const float coefficient = input.coefficients[index];
-        float storedDelta;
-        if (index < 2) {
-            __asm {
-                fild delta
-                fstp storedDelta
-                fld storedDelta
-            }
-        } else {
-            __asm { fild delta }
-        }
-        __asm {
-            fmul coefficient
-            fild value
-            faddp st(1), st(0)
-            fldcw conversionWord
-            fistp value
-            fldcw controlWord
-        }
-    }
-    for (unsigned index = 0; index < 2; ++index) {
-        const int modifier = index == 0 ? input.modifierA : static_cast<int>(
-            static_cast<uint32_t>(input.modifierB) - (input.modifierPenalty ? 1u : 0u));
-        const unsigned coefficientIndex = index == 0 ? (modifier >= 0 ? 7 : 8)
-            : (modifier >= 0 ? 9 : 10);
-        const double coefficient = input.coefficients[coefficientIndex];
-        double storedWeight;
-        __asm {
-            fild modifier
-            fmul coefficient
-        }
-        // 4e9e91 stores B's weighted modifier as a qword before adding one.
-        if (index == 1) {
-            __asm {
-                fstp storedWeight
-                fld storedWeight
-            }
-        }
-        __asm {
-            fadd one
-            fild value
-            fmulp st(1), st(0)
-            fldcw conversionWord
-            fistp value
-            fldcw controlWord
-        }
-    }
-    const void* initiative = input.initiativeBits;
-    const float coefficient = input.coefficients[6];
-    const int baseInitiative = input.baseInitiative;
-    float storedInitiativeDelta;
-    __asm {
-        mov eax, initiative
-        fld tbyte ptr [eax]
-        fisub baseInitiative
-        fstp storedInitiativeDelta
-        fld storedInitiativeDelta
-        fmul coefficient
-        fadd one
-        fild value
-        fmulp st(1), st(0)
-        fldcw conversionWord
-        fistp value
-        fldcw controlWord
-    }
-    return static_cast<int64_t>(static_cast<uint64_t>(value)
-        * static_cast<uint64_t>(static_cast<int64_t>(input.quantity)));
-}
-
-uint32_t DrawSourceRandom(uint32_t& state, uint32_t bound) {
-    if (bound == 0) return 0;
-    const uint32_t first = state * 0x343fdu + 0x269ec3u;
-    state = first * 0x343fdu + 0x269ec3u;
-    const uint32_t mixed = static_cast<uint32_t>(static_cast<int32_t>(first) >> 7) ^ (state << 6);
-    return mixed % bound;
-}
-
-bool CalculateSourceComposition(int64_t own, int64_t enemy, uint32_t seed, uint16_t selected,
-                                uint32_t type, uint32_t quantity, int footprint,
-                                const uint32_t* upgrades, uint32_t upgradeCount,
-                                double halfThreshold, double oneThreshold, uint32_t* output) {
-    if (output == nullptr || enemy == 0 || quantity == 0 || quantity > 0x7fffffffu
-        || footprint <= 0 || upgradeCount > 32 || (upgradeCount && upgrades == nullptr)) return false;
-    memset(output, 0, 24 * sizeof(uint32_t));
-    memcpy(output + 1, &own, 8); memcpy(output + 3, &enemy, 8);
-    const int maximum = footprint > 2 ? 2 : 4;
-    int count = maximum == 2 ? 2 : 4;
-    double ratio;
-    unsigned short original;
-    __asm {
-        fnstcw original
-        fldcw selected
-        fild own
-        fild enemy
-        fdivp st(1), st(0)
-        fst ratio
-    }
-    if (maximum == 4) {
-        __asm {
-            fcom halfThreshold
-            fnstsw ax
-            test ax, 0x0100
-            jnz composition_threshold_done
-            mov count, 3
-            fcom oneThreshold
-            fnstsw ax
-            test ax, 0x0100
-            jnz composition_threshold_done
-            mov count, 2
-        composition_threshold_done:
-        }
-    }
-    __asm {
-        fstp st(0)
-        fldcw original
-    }
-    memcpy(output + 5, &ratio, 8);
-    output[7] = maximum; output[8] = count;
-    output[9] = DrawSourceRandom(seed, 100) + 1;
-    if (output[9] <= 30) --count;
-    else if (output[9] >= 70 && count < maximum) ++count;
-    if (static_cast<uint32_t>(count) > quantity) count = static_cast<int>(quantity);
-    if (count < 1) count = 1;
-    uint32_t upgrade = 0;
-    if (count > 2 && upgradeCount) {
-        output[10] = DrawSourceRandom(seed, 100) + 1;
-        if (output[10] < 50) {
-            output[11] = DrawSourceRandom(seed, upgradeCount) + 1;
-            upgrade = upgrades[output[11] - 1];
-        }
-    }
-    output[12] = count; output[13] = seed; output[14] = selected;
-    for (int index = 0; index < count; ++index) {
-        output[16 + index * 2] = upgrade && index > 0 && index < count - 1 ? upgrade : type;
-        output[17 + index * 2] = quantity / count + (static_cast<uint32_t>(index) < quantity % count ? 1 : 0);
-    }
-    output[0] = 1;
-    return true;
-}
-
-struct PlacementAggregate {
-    int extra0, unused, extra2, damage;
-    float attack, multiplier;
-    int health;
-    float defence;
-    int eligibleHealth;
-    float eligibleDefence;
-    float shooterDamage, shooterAttack;
-    float flyingDamage, flyingAttack;
-    float groundDamage, groundAttack;
-    int magicPower;
-    uintptr_t nativeHelper;
-};
-static_assert(sizeof(PlacementAggregate) == 0x48, "Native score aggregate layout");
-
-struct BaselineActionFactorInput {
-    int morale, luck, speed;
-    float initiative, atb;
-    bool skipSpeed, selected, retaliationBonus;
-    int32_t counterMaximum[3]{}, counterCurrent[3]{};
-    bool halfRangedFactor = false;
-};
-
-struct PlacementWeights {
-    int attack;
-    float action;
-    int defence, eligibleDefence;
-    int shooterDamage, flyingDamage, groundDamage;
-};
-
-void InitializePlacementAggregate(PlacementAggregate& aggregate, PlacementWeights& weights) {
-    memset(&aggregate, 0, sizeof(aggregate));
-    memset(&weights, 0, sizeof(weights));
-    aggregate.multiplier = 1.0f;
-    // bfbe50 seeds the action numerator, not just its final normalized field.
-    weights.action = 1.0f;
-}
-
-float PlacementRatio(int numerator, int denominator) {
-    float result;
-    __asm {
-        fild numerator
-        fidiv denominator
-        fstp result
-    }
-    return result;
-}
-
-float PlacementRatio(float numerator, int denominator) {
-    float result;
-    __asm {
-        fild denominator
-        fdivr numerator
-        fstp result
-    }
-    return result;
-}
-
-int CalculatePlacementPower(const PlacementAggregate& aggregate, const PlacementAggregate& opponent,
-                            float increase, float decrease, bool shootersOnly) {
-    // A58D30 stores the attack delta as float, but returns an extended x87 factor.
-    // BF9CC0/BFA1B0 truncate defence and the result without narrowing that factor.
-    uint16_t original, truncation;
-    int defence, power;
-    float defenceValue, delta;
-    __asm fnstcw original
-    truncation = original | 0x0c00;
-    const float opponentDefence = opponent.eligibleDefence;
-    __asm {
-        fld opponentDefence
-        fldcw truncation
-        fistp defence
-        fldcw original
-        fild defence
-        fstp defenceValue
-    }
-    const float attack = shootersOnly ? aggregate.shooterAttack : aggregate.attack;
-    __asm {
-        fld attack
-        fsub defenceValue
-        fstp delta
-    }
-    float coefficient = delta > 0 ? increase : decrease;
-    if (!(coefficient > 0)) coefficient = 0;
-    const float one = 1.0f;
-    const float multiplier = aggregate.multiplier;
-    const int damage = aggregate.damage;
-    const float shooterDamage = aggregate.shooterDamage;
-    __asm {
-        fld coefficient
-        fmul delta
-    }
-    if (delta > 0) {
-        __asm fadd one
-    } else {
-        __asm {
-            fsubr one
-            fdivr one
-        }
-    }
-    if (shootersOnly) {
-        __asm fmul shooterDamage
-    } else {
-        __asm fimul damage
-    }
-    __asm {
-        fmul multiplier
-        fldcw truncation
-        fistp power
-        fldcw original
-    }
-    if (shootersOnly) return power;
-    int extra = 0;
-    if (CalculatePlacementPower(aggregate, opponent, increase, decrease, true)
-        > CalculatePlacementPower(opponent, aggregate, increase, decrease, true)) {
-        const float flying = opponent.flyingDamage, shooter = opponent.shooterDamage;
-        const float ground = opponent.groundDamage;
-        const int extraPower = aggregate.unused;
-        __asm {
-            fld flying
-            fadd shooter
-            fadd ground
-            fdivr ground
-            fimul extraPower
-            fldcw truncation
-            fistp extra
-            fldcw original
-        }
-    }
-    return static_cast<int>(static_cast<uint32_t>(power) + static_cast<uint32_t>(extra)
-        + static_cast<uint32_t>(aggregate.extra0) + static_cast<uint32_t>(aggregate.magicPower));
-}
-
-void NormalizePlacementAggregate(PlacementAggregate& aggregate, const PlacementWeights& weights) {
-    if (aggregate.damage != 0) {
-        aggregate.attack = PlacementRatio(weights.attack, aggregate.damage);
-        aggregate.multiplier = PlacementRatio(weights.action, aggregate.damage);
-    }
-    if (aggregate.health != 0) {
-        aggregate.defence = PlacementRatio(weights.defence, aggregate.health);
-    }
-    if (aggregate.eligibleHealth != 0) {
-        aggregate.eligibleDefence = PlacementRatio(weights.eligibleDefence, aggregate.eligibleHealth);
-    }
-    if (weights.shooterDamage != 0) {
-        aggregate.shooterAttack = PlacementRatio(aggregate.shooterAttack, weights.shooterDamage);
-    }
-    if (weights.flyingDamage != 0) {
-        aggregate.flyingAttack = PlacementRatio(aggregate.flyingAttack, weights.flyingDamage);
-    }
-    if (weights.groundDamage != 0) {
-        aggregate.groundAttack = PlacementRatio(aggregate.groundAttack, weights.groundDamage);
-    }
-}
-
-struct AreaSpellInput {
-    uint32_t identifier, usable, areaAllowed, damaging, excluded;
-    int32_t damage;
-    uint32_t limited;
-    int32_t charges, cost;
-};
-
-int CalculateAreaSpellPower(int baseline, int resources, int horizon, bool areaOnly,
-                           const AreaSpellInput* spells, uint32_t count) {
-    // BFA360: the four-turn area estimate differs from the ten-turn aggregate.
-    if (horizon <= 0) return baseline;
-    int best = baseline;
-    for (uint32_t index = 0; index < count; ++index) {
-        const auto& spell = spells[index];
-        if (!spell.usable || (areaOnly && !spell.areaAllowed) || !spell.damaging
-            || spell.identifier == 0xa2 || spell.identifier == 0x13c || spell.excluded || spell.damage == 0) continue;
-        int casts = spell.limited ? spell.charges : (spell.cost > 0 ? resources / spell.cost : 100);
-        if (spell.limited || spell.cost > 0) {
-            if (casts < 1) continue;
-        }
-        if (casts > horizon) casts = horizon;
-        const int product = static_cast<int>(static_cast<uint32_t>(casts) * static_cast<uint32_t>(spell.damage));
-        const int power = product / horizon;
-        if (power > best) best = power;
-    }
-    return best;
-}
-
-int CalculateAreaPhysicalPower(int quantity, float damageSum, bool ranged, bool canShoot,
-                               bool halfRanged, bool areaMelee) {
-    const float half = 0.5f;
-    int damage;
-    uint16_t original, truncation;
-    __asm fnstcw original
-    truncation = original | 0x0c00;
-    __asm {
-        fild quantity
-        fmul damageSum
-        fmul half
-        fldcw truncation
-        fistp damage
-        fldcw original
-    }
-    uint32_t total = 0;
-    if (ranged && canShoot) total += static_cast<uint32_t>(halfRanged ? damage / 2 : damage);
-    if (areaMelee) total += static_cast<uint32_t>(damage);
-    return static_cast<int>(total);
-}
-
-// Initial-state arithmetic with resource ratios. Remaining status, ability and
-// action corrections must be reconstructed before complete policy replay.
-float BaselineActionFactor(const BaselineActionFactorInput& input) {
-    const float one = 1.0f, tenth = 0.1f, twentieth = 0.05f, retaliation = 1.1f;
-    const int morale = input.morale, luck = input.luck, speedDelta = input.speed - 5;
-    const float initiative = input.initiative < 2 ? 2 : input.initiative > 30 ? 30 : input.initiative;
-    const float atb = input.atb < 0 ? 0 : input.atb > 1 ? 1 : input.atb;
-    float factor;
-    // Match the native x87 intermediate precision and each float store.
-    __asm {
-        fild luck
-        fmul tenth
-        fadd one
-        fild morale
-        fmul tenth
-        fadd one
-        fmulp st(1), st(0)
-        fstp factor
-        fld initiative
-        fmul factor
-        fmul tenth
-        fstp factor
-    }
-    if (input.halfRangedFactor) {
-        const float half = 0.5f;
-        __asm {
-            fld factor
-            fmul half
-            fstp factor
-        }
-    }
-    if (!input.skipSpeed) {
-        __asm {
-            fild speedDelta
-            fmul twentieth
-            fadd one
-            fmul factor
-            fstp factor
-        }
-    }
-    if (!input.selected) {
-        __asm {
-            fld atb
-            fmul tenth
-            fadd one
-            fsub twentieth
-            fmul factor
-            fstp factor
-        }
-    }
-    for (uint32_t index = 0; index < 3; ++index) {
-        const int maximum = input.counterMaximum[index], current = input.counterCurrent[index];
-        if (maximum <= 0) continue;
-        __asm {
-            fild current
-            fmul tenth
-            fidiv maximum
-            fadd one
-            fmul factor
-            fstp factor
-        }
-    }
-    if (input.retaliationBonus) {
-        __asm {
-            fld factor
-            fmul retaliation
-            fstp factor
-        }
-    }
-    return factor < 0 ? 0 : factor > 13 ? 13 : factor;
-}
-
-unsigned SelectPlacementDamageCategory(bool excluded, bool shooter, bool flying,
-                                       bool special, bool ignoreWhenNoRanged) {
-    if (excluded) return 3;
-    if (shooter || (special && ignoreWhenNoRanged)) return 0;
-    return flying ? 1 : 2;
-}
-
-// category: 0 shooter, 1 flying, 2 ground; other values omit category totals.
-// Callers supply effective damage/attack and the already reconstructed factor.
-void AccumulatePlacementDamage(PlacementAggregate& aggregate, PlacementWeights& weights,
-                               int damage, int attack, float action, unsigned category) {
-    aggregate.damage = static_cast<int32_t>(static_cast<uint32_t>(aggregate.damage) + static_cast<uint32_t>(damage));
-    const int32_t attackContribution = static_cast<int32_t>(
-        (static_cast<uint32_t>(attack) + 1u) * static_cast<uint32_t>(damage));
-    weights.attack = static_cast<int32_t>(static_cast<uint32_t>(weights.attack)
-        + static_cast<uint32_t>(attackContribution));
-    float actionDamage;
-    float* total = &weights.action;
-    __asm {
-        fild damage
-        fmul action
-        fstp actionDamage
-        mov eax, total
-        fld actionDamage
-        fadd dword ptr [eax]
-        fstp dword ptr [eax]
-    }
-    if (category > 2) return;
-    float* categoryDamage = category == 0 ? &aggregate.shooterDamage
-        : category == 1 ? &aggregate.flyingDamage : &aggregate.groundDamage;
-    float* categoryAttack = category == 0 ? &aggregate.shooterAttack
-        : category == 1 ? &aggregate.flyingAttack : &aggregate.groundAttack;
-    int* denominator = category == 0 ? &weights.shooterDamage
-        : category == 1 ? &weights.flyingDamage : &weights.groundDamage;
-    *denominator = static_cast<int32_t>(static_cast<uint32_t>(*denominator) + static_cast<uint32_t>(damage));
-    __asm {
-        mov eax, categoryDamage
-        mov edx, categoryAttack
-        fld actionDamage
-        fadd dword ptr [eax]
-        fstp dword ptr [eax]
-        fild attackContribution
-        fadd dword ptr [edx]
-        fstp dword ptr [edx]
-    }
-}
-
-// Effective health/defence include earlier status transformations. The native
-// eligible-health subset uses its own defence, which can differ from the total.
-void AccumulatePlacementHealth(PlacementAggregate& aggregate, PlacementWeights& weights,
-                               int health, int defence, int eligibleDefence, bool includeEligible) {
-    aggregate.health = static_cast<int32_t>(static_cast<uint32_t>(aggregate.health) + static_cast<uint32_t>(health));
-    const uint32_t contribution = (static_cast<uint32_t>(defence) + 1u) * static_cast<uint32_t>(health);
-    weights.defence = static_cast<int32_t>(static_cast<uint32_t>(weights.defence) + contribution);
-    if (!includeEligible) return;
-    aggregate.eligibleHealth = static_cast<int32_t>(
-        static_cast<uint32_t>(aggregate.eligibleHealth) + static_cast<uint32_t>(health));
-    const uint32_t eligibleContribution = (static_cast<uint32_t>(eligibleDefence) + 1u)
-        * static_cast<uint32_t>(health);
-    weights.eligibleDefence = static_cast<int32_t>(
-        static_cast<uint32_t>(weights.eligibleDefence) + eligibleContribution);
-}
-
-float ApplyHeroActionCorrection(float factor, int32_t firstScalar, int32_t secondScalar) {
-    const int32_t sum = static_cast<int32_t>(static_cast<uint32_t>(firstScalar) + static_cast<uint32_t>(secondScalar));
-    const float coefficient = 0.05f, one = 1.0f;
-    float adjustment;
-    __asm {
-        fild sum
-        fmul coefficient
-        fstp adjustment
-        fld adjustment
-        fadd one
-        fmul factor
-        fstp factor
-    }
-    return factor;
-}
-
-int32_t TransformPlacementHealth(int32_t health, uint32_t flags, const uint32_t* scaleBits) {
-    if ((flags & 1) == 0) return health;
-    double scale;
-    memcpy(&scale, scaleBits, sizeof(scale));
-    int64_t transformed;
-    uint16_t original, truncated;
-    __asm {
-        fild health
-        fmul scale
-        fnstcw original
-        mov ax, original
-        or ax, 0x0c00
-        mov truncated, ax
-        fldcw truncated
-        fistp transformed
-        fldcw original
-    }
-    return static_cast<int32_t>(static_cast<uint32_t>(static_cast<uint64_t>(transformed)));
-}
+// Shared pure placement calculations: placement_calculations.hpp.
 
 void CaptureKnownHeroModifiers(const uint32_t* owner) {
     g_knownHeroAttack = -1;
     g_knownHeroBattleFrenzy = false;
+    // Ordinary policy uses base creature statistics and the known own army.
+    // Hero modifiers were explicitly excluded by the owner.
+    if (!g_superadminEnabled) return;
     if (owner == nullptr || owner[0x98 / 4] == 0) return;
     const auto* holder = reinterpret_cast<const uint32_t*>(owner[0x98 / 4]);
     const uint32_t hero = holder[0x10 / 4];
@@ -1033,27 +500,25 @@ void PrepareKnownHeroPolicy() {
         const float threshold = *reinterpret_cast<const float*>(settings + 0xbf4);
         g_knownHeroLarge = large / total > threshold;
         if (!g_superadminEnabled && knownDamage > 0 && knownDamage < INT_MAX) {
-            // Public row labels give only ranges, never source quantities.
-            // Use their midpoints to estimate health-weighted enemy defence.
-            const double midpoints[] = {0, 2.5, 7, 14.5, 34.5, 74.5, 174.5, 374.5, 749.5, 1000};
-            const double lowerBounds[] = {0, 1, 5, 10, 20, 50, 100, 250, 500, 1000};
+            // Sorting and strategy share the same admitted count/interval.
             double defenceWeight = 0;
             double healthWeight = 0;
             double enemyDamage = 0;
             double enemyShooterDamage = 0;
             double enemyShooterAttackWeight = 0;
             for (LONG index = 0; index < g_publicCount; ++index) {
-                const unsigned band = g_publicBands[index];
                 const int* creature = definition(g_publicTypes[index]);
-                if (band < 1 || band > 9 || creature == nullptr || creature[0x64 / 4] <= 0) return;
-                const double weight = midpoints[band] * creature[0x64 / 4];
+                const double estimatedQuantity = PublicQuantityEstimate(index, false);
+                const double conservativeQuantity = PublicQuantityEstimate(index, true);
+                if (estimatedQuantity <= 0 || conservativeQuantity <= 0 || creature == nullptr || creature[0x64 / 4] <= 0) return;
+                const double weight = estimatedQuantity * creature[0x64 / 4];
                 healthWeight += weight;
                 defenceWeight += weight * creature[0x48 / 4];
-                const double damage = midpoints[band] *
+                const double damage = estimatedQuantity *
                     (static_cast<double>(creature[0x50 / 4]) + creature[0x54 / 4]) / 2;
                 enemyDamage += damage;
                 if (creature[0x4c / 4] > 0) {
-                    const double shooterDamage = lowerBounds[band] *
+                    const double shooterDamage = conservativeQuantity *
                         (static_cast<double>(creature[0x50 / 4]) + creature[0x54 / 4]) / 2;
                     enemyShooterDamage += shooterDamage;
                     enemyShooterAttackWeight += shooterDamage * creature[0x44 / 4];
@@ -1068,9 +533,9 @@ void PrepareKnownHeroPolicy() {
                     return delta > 0 ? 1 + coefficient * delta : 1 / (1 - coefficient * delta);
                 };
                 // First public-only estimate of the native 0xbfa1b0 ratio.
-                // Hero bonuses and area power are still calibrated estimates.
+                // Ordinary mode deliberately excludes hero bonuses.
                 const double attack = knownAttackWeight / knownDamage
-                    + (g_knownHeroAttack >= 0 ? g_knownHeroAttack : 1.0);
+                    + (g_knownHeroAttack >= 0 ? g_knownHeroAttack : 0.0);
                 const int denominator = static_cast<int>(knownDamage * 1.5 *
                     factorAgainst(attack, defenceWeight / healthWeight));
                 g_estimatedSpreadDenominator = denominator > 0 ? static_cast<uint32_t>(denominator) : 0;
@@ -1086,7 +551,7 @@ void PrepareKnownHeroPolicy() {
                     const double knownShooterPower = knownShooterDamage > 0
                         ? knownShooterDamage * 1.5 * factorAgainst(
                             knownShooterAttackWeight / knownShooterDamage
-                                + (g_knownHeroAttack >= 0 ? g_knownHeroAttack : 1),
+                                + (g_knownHeroAttack >= 0 ? g_knownHeroAttack : 0),
                             defenceWeight / healthWeight)
                         : 0;
                     const float shareThreshold = *reinterpret_cast<const float*>(settings + 0xbfc);
@@ -1236,8 +701,7 @@ int ChooseProtectiveCell() {
     return -1;
 }
 
-// Ordinary mode uses synthetic quantity=1; explicit Superadmin uses the map
-// source quantities captured before Start. The native sort preserves its ties.
+// Shared physical-shot and placement-category bindings.
 bool PlacementHasPhysicalShot(uint32_t type) {
     const auto* creature = reinterpret_cast<const int* (__fastcall*)(uint32_t)>(kCreatureDefinition)(type);
     if (creature == nullptr) return false;
@@ -1320,7 +784,7 @@ bool PreparePublicOrder() {
     reference.attack = static_cast<float>(peasant[0x44 / 4]);
     uint32_t quantities[7]{};
     for (LONG index = 0; index < g_publicCount; ++index) {
-        if (!g_superadminEnabled) continue;
+        if (!g_superadminEnabled) { quantities[index] = g_publicKnownCounts[index]; continue; }
         if (g_superadminSourceGeneration != g_placementGeneration) return false;
         LONG occurrence = 0;
         for (LONG previous = 0; previous < index; ++previous) {
@@ -1351,7 +815,8 @@ bool PreparePublicOrder() {
             if (!creature) return false;
             const int creatureRole = PublicPlacementRole(g_publicTypes[index]);
             if (creatureRole != role) continue;
-            const int quantity = g_superadminEnabled ? static_cast<int>(quantities[index]) : 1;
+            const uint32_t estimate = quantities[index] ? quantities[index] : PublicQuantityEstimate(index, false);
+            const int quantity = estimate ? static_cast<int>(estimate) : 1;
             const int64_t damage = (static_cast<int64_t>(creature[0x50 / 4]) + creature[0x54 / 4]) * quantity / 2;
             const int64_t health = static_cast<int64_t>(creature[0x64 / 4]) * quantity;
             if (quantity < 1 || damage < 0 || damage > INT_MAX || health < 0 || health > INT_MAX) return false;
@@ -1803,7 +1268,8 @@ bool __cdecl SpreadRowAllowed(int role, int row) {
     const int step = (rows - 1) / (count - 1);
     // Local row zero itself fails the 2x2 footprint check; its first legal
     // anchor y=2 competes with the other spaced rows using row score first.
-    // On an equal score its retained local-zero tie rank loses to later rows.
+    // Its own tie rank remains local zero; a separately retained local row
+    // one must still compete with its own score and priority.
     bool selected = zeroBased == rows - 1 || (footprint == 2 && row == 2);
     for (int index = 0; index < count - 1; ++index) {
         if (zeroBased == index * step) selected = true;
@@ -1827,6 +1293,216 @@ bool __cdecl SpreadRowAllowed(int role, int row) {
     }
     return !hasClear || !frontOccupied(zeroBased);
 }
+
+bool __cdecl SpreadSecondRowUsesOwnPriority() {
+    const int count = g_publicCount;
+    const int rows = *reinterpret_cast<const int*>(g_outputStorage + 8 + 388) - 2;
+    if (count < 2 || rows < 2) { return true; }
+    // A dense spaced list can contain local1 independently of shifted local0.
+    // Preserve that record's own score and tie rank when both reach y2.
+    return rows == 2 || (count > 2 && (rows - 1) / (count - 1) == 1);
+}
+
+// Configuration changes apply at the next attack, preserving the current
+// frozen forecast. The process setting survives a payload replacement.
+bool SetResearchMode(bool enabled) {
+    return SetEnvironmentVariableW(L"H5_PREVIEW_SUPERADMIN", enabled ? L"1" : L"0") != 0;
+}
+
+bool SetNeutralTypeKnowledge(bool known) {
+    return SetEnvironmentVariableW(L"H5_PREVIEW_NEUTRAL_TYPES", known ? L"1" : L"0") != 0;
+}
+
+bool NeutralTypesKnown() {
+    wchar_t neutralTypes[8]{};
+    return !(GetEnvironmentVariableW(L"H5_PREVIEW_NEUTRAL_TYPES", neutralTypes, 8) == 1
+        && neutralTypes[0] == L'0');
+}
+
+// Both entry points use the original explicit research configuration.
+void ConfigureResearchMode() {
+    g_neutralTypesUnknown = !NeutralTypesKnown();
+    wchar_t mode[8]{};
+    g_superadminEnabled = GetEnvironmentVariableW(L"H5_PREVIEW_SUPERADMIN", mode, 8) == 1 && mode[0] == L'1';
+    wchar_t spread[8]{};
+    g_useSpreadRows = g_superadminEnabled
+        && GetEnvironmentVariableW(L"H5_PREVIEW_SUPERADMIN_SPREAD", spread, 8) == 1 && spread[0] == L'1';
+}
+
+// Mod-owned research state, retained by the adapter across payload replacements.
+// No SDK types or payload callbacks. Source pointers keep their original lifetime
+// rules: saving an identity does not authorize dereferencing it after combat.
+// Busy flags and the seqlock belong to the active call, never the saved value.
+#define H5_PRECISE_RESEARCH_FIELDS(FIELD) \
+    FIELD(orderedPublicTypes) \
+    FIELD(useSpreadRows) \
+    FIELD(estimatedSpreadDenominator) \
+    FIELD(knownHeroAttack) \
+    FIELD(knownHeroBattleFrenzy) \
+    FIELD(spreadFallback) \
+    FIELD(superadminSourceTypes) \
+    FIELD(superadminSourceCounts) \
+    FIELD(superadminSourcePointers) \
+    FIELD(superadminSourceKind) \
+    FIELD(superadminSourceModifiersKnown) \
+    FIELD(superadminSourceSpeed) \
+    FIELD(superadminSourceFlying) \
+    FIELD(superadminSourceAggregate) \
+    FIELD(superadminTerrainKnown) \
+    FIELD(superadminTerrainMask) \
+    FIELD(superadminTerrainType) \
+    FIELD(superadminRngKnown) \
+    FIELD(superadminRngState) \
+    FIELD(publicSortSpeed) \
+    FIELD(publicSortFlying) \
+    FIELD(publicSortDistance) \
+    FIELD(predictionExcludedMask) \
+    FIELD(plannedProjectionCount) \
+    FIELD(projectionPlanning) \
+    FIELD(publicPlacementScore) \
+    FIELD(superadminSourceCount) \
+    FIELD(superadminSourceGeneration) \
+    FIELD(knownHeroLarge) \
+    FIELD(predictedDefensive) \
+    FIELD(protectiveCells) \
+    FIELD(protectiveCellCount) \
+    FIELD(candidateIdentity) \
+    FIELD(definitionMaximum) \
+    FIELD(groundRetryOrder) \
+    FIELD(actorInputs) \
+    FIELD(actorInputCount) \
+    FIELD(actorInputGeneration) \
+    FIELD(actorInputOverflow) \
+    FIELD(actorInputsFrozen) \
+    FIELD(actorInputWorld) \
+    FIELD(actorCoreMask) \
+    FIELD(actorCoreStackCounts) \
+    FIELD(actorCoreWords) \
+    FIELD(actorCoreInputEnds) \
+    FIELD(strategyTrace) \
+    FIELD(heroCorrections) \
+    FIELD(heroCorrectionCount) \
+    FIELD(heroCorrectionOverflow) \
+    FIELD(heroCorrectionMask) \
+    FIELD(auxiliaryInputs) \
+    FIELD(auxiliaryInputCount) \
+    FIELD(auxiliaryInputOverflow) \
+    FIELD(auxiliaryMask) \
+    FIELD(sourceStrengthInputs) \
+    FIELD(sourceStrengthCount) \
+    FIELD(sourceStrengthOverflow) \
+    FIELD(sourceSplitSeed) \
+    FIELD(sourceComposition) \
+    FIELD(sourceSimpleLayout) \
+    FIELD(sourceSimpleColumns) \
+    FIELD(sourceFallbackPrepared) \
+    FIELD(sourceFallbackCells) \
+    FIELD(areaInputs) \
+    FIELD(areaInputCount) \
+    FIELD(areaInputOverflow) \
+    FIELD(areaPolicyTrace) \
+    FIELD(largePolicyTrace)
+
+struct PreciseResearchState {
+    uint32_t version;
+    bool enabled;
+#define H5_RESEARCH_MEMBER(name) decltype(g_##name) name;
+    H5_PRECISE_RESEARCH_FIELDS(H5_RESEARCH_MEMBER)
+#undef H5_RESEARCH_MEMBER
+    // Appended publication fence for read-only process diagnostics. It is not
+    // copied back into the algorithm's active-call seqlock.
+    volatile LONG sequence;
+
+    bool Load() const {
+        if (version != 3 || actorInputCount < 0 || actorInputCount > kActorInputCapacity ||
+            heroCorrectionCount > h5_preview::PlacementHeroCorrectionCapacity || auxiliaryInputCount > h5_preview::PlacementAuxiliaryInputCapacity ||
+            sourceStrengthCount > 256 || areaInputCount > 128 ||
+            superadminSourceCount < 0 || superadminSourceCount > 7) { return false; }
+        g_superadminEnabled = enabled;
+#define H5_RESEARCH_LOAD(name) memcpy((void*)&g_##name, (const void*)&name, sizeof(name));
+        H5_PRECISE_RESEARCH_FIELDS(H5_RESEARCH_LOAD)
+#undef H5_RESEARCH_LOAD
+        g_actorInputBusy = g_sourceStrengthBusy = g_areaInputBusy = false;
+        return true;
+    }
+
+    void Save() {
+        InterlockedIncrement(&sequence);
+        enabled = g_superadminEnabled;
+#define H5_RESEARCH_SAVE(name) memcpy((void*)&name, (const void*)&g_##name, sizeof(name));
+        H5_PRECISE_RESEARCH_FIELDS(H5_RESEARCH_SAVE)
+#undef H5_RESEARCH_SAVE
+        version = 3;
+        InterlockedIncrement(&sequence);
+    }
+};
+#undef H5_PRECISE_RESEARCH_FIELDS
+
+// Only derived values from the permitted player inputs survive between public
+// callbacks. Full actor/source journals live in the separate precise context.
+#define H5_PUBLIC_PLANNER_FIELDS(FIELD) \
+    FIELD(orderedPublicTypes) FIELD(useSpreadRows) FIELD(estimatedSpreadDenominator) \
+    FIELD(knownHeroAttack) FIELD(knownHeroBattleFrenzy) FIELD(spreadFallback) \
+    FIELD(publicSortSpeed) FIELD(publicSortFlying) FIELD(publicSortDistance) \
+    FIELD(predictionExcludedMask) FIELD(plannedProjectionCount) FIELD(projectionPlanning) \
+    FIELD(publicPlacementScore) FIELD(knownHeroLarge) FIELD(predictedDefensive) \
+    FIELD(protectiveCells) FIELD(protectiveCellCount) FIELD(candidateIdentity) \
+    FIELD(definitionMaximum) FIELD(groundRetryOrder) FIELD(publicKnownCounts) FIELD(publicQuantityLabels) \
+    FIELD(neutralTypesUnknown)
+struct PublicPlannerState {
+#define H5_PUBLIC_MEMBER(name) decltype(g_##name) name;
+    H5_PUBLIC_PLANNER_FIELDS(H5_PUBLIC_MEMBER)
+#undef H5_PUBLIC_MEMBER
+    void Save() {
+#define H5_PUBLIC_SAVE(name) memcpy((void*)&name, (const void*)&g_##name, sizeof(name));
+        H5_PUBLIC_PLANNER_FIELDS(H5_PUBLIC_SAVE)
+#undef H5_PUBLIC_SAVE
+    }
+    void Load() const {
+        static const PreciseResearchState empty{3, false};
+        empty.Load();
+        g_actorInputsFrozen = true;
+#define H5_PUBLIC_LOAD(name) memcpy((void*)&g_##name, (const void*)&name, sizeof(name));
+        H5_PUBLIC_PLANNER_FIELDS(H5_PUBLIC_LOAD)
+#undef H5_PUBLIC_LOAD
+    }
+};
+#undef H5_PUBLIC_PLANNER_FIELDS
+bool g_referenceCalculationActive = false;
+
+bool ApplyScoutedSource(const PreciseResearchState& source, const uint32_t* owner) {
+    if (g_superadminEnabled || g_neutralTypesUnknown || !owner || source.version != 3 || source.superadminSourceKind != 1 ||
+        source.actorInputGeneration != g_attackGeneration || source.superadminSourceGeneration != g_placementGeneration ||
+        source.superadminSourceCount < 1 || source.superadminSourceCount > 7 ||
+        source.superadminSourceCount != g_publicCount) { return false; }
+    __try {
+        const auto* holder = reinterpret_cast<const uint32_t*>(owner[0x98 / 4]);
+        const auto* hero = holder ? reinterpret_cast<const uint32_t*>(holder[0x10 / 4]) : nullptr;
+        if (!hero) { return false; }
+        const auto* methods = reinterpret_cast<const uint32_t*>(*hero);
+        const auto mastery = reinterpret_cast<int(__thiscall*)(const void*, int)>(methods[0x174 / 4]);
+        // Narrow owner-approved visibility exception. No attack/defence,
+        // specialization, spell/rune, or final split input is imported.
+        if (mastery(hero, 20) <= 0) {
+            // Original HasArtefact wrapper checks the worn set first, then
+            // optionally the backpack. Only its worn-set path is admitted.
+            const auto equipped = reinterpret_cast<const void*(__thiscall*)(const void*)>(methods[0x74 / 4])(hero);
+            const auto contains = reinterpret_cast<bool(__thiscall*)(const void*, int)>(0x4ba880);
+            if (!equipped || !contains(equipped, 12)) { return false; }
+        }
+        for (LONG index = 0; index < source.superadminSourceCount; ++index) {
+            if (!source.superadminSourceTypes[index] || !source.superadminSourceCounts[index] ||
+                source.superadminSourceCounts[index] > INT_MAX) { return false; }
+        }
+        for (LONG index = 0; index < source.superadminSourceCount; ++index) {
+            g_publicTypes[index] = source.superadminSourceTypes[index];
+            g_publicKnownCounts[index] = source.superadminSourceCounts[index];
+            swprintf_s(g_publicQuantityLabels[index], L"%u", g_publicKnownCounts[index]);
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
 
 void ResetSuperadminInputCapture() {
     InterlockedIncrement(&g_actorInputSequence);
@@ -1878,105 +1554,30 @@ void __cdecl CaptureSuperadminActorInput(const uint32_t* actor, uint32_t aggrega
     }
     g_actorInputBusy = true;
     FrozenActorInput input{};
-    input.damage = damage;
-    input.aggregateIdentity = aggregateIdentity;
-    input.specialCategory = specialCategory & 255;
-    input.attackGeneration = g_attackGeneration;
-    uint16_t controlWord;
-    __asm fnstcw controlWord
-    input.controlWord = controlWord;
-    if (actor == nullptr || actor[0] != 0xe4fba4) {
-        input.unsupported = 1;
-    } else {
-        const auto* methods = reinterpret_cast<const uint32_t*>(actor[0]);
-        const auto integer = [&](uint32_t offset) {
-            return reinterpret_cast<int32_t (__thiscall*)(const void*)>(methods[offset / 4])(actor);
-        };
-        const auto floating = [&](uint32_t offset) {
-            return reinterpret_cast<float (__thiscall*)(const void*)>(methods[offset / 4])(actor);
-        };
-        const auto boolean = [&](uint32_t offset) {
-            return reinterpret_cast<bool (__thiscall*)(const void*)>(methods[offset / 4])(actor);
-        };
-        const auto flag = [&](uint32_t value) {
-            return reinterpret_cast<bool (__thiscall*)(const void*, uint32_t)>(methods[0x28c / 4])(actor, value);
-        };
-        const auto status = [&](uint32_t value) {
-            return reinterpret_cast<uint32_t (__thiscall*)(const void*, uint32_t)>(methods[0x28 / 4])(actor, value);
-        };
-        input.world = integer(8);
-        if (input.world == 0 || *reinterpret_cast<const uint32_t*>(input.world) != 0xe79d3c) input.unsupported |= 128;
-        input.army = integer(0xc);
-        input.attack = integer(0x198);
-        input.defence = integer(0x19c);
-        input.health = reinterpret_cast<int32_t (__thiscall*)(const void*, uint32_t)>(methods[0x1dc / 4])(
-            actor, integer(0x20));
-        input.initiative = floating(0x1bc);
-        const auto* timer = reinterpret_cast<const float*>(integer(0x184));
-        if (timer != nullptr) input.atb = timer[0x1c / 4];
-        else input.unsupported |= 2;
-        input.morale = integer(0x1ac);
-        input.luck = integer(0x1b0);
-        input.speed = integer(0x48);
-        const bool shooter = boolean(0x1e0);
-        input.rangedCapability = shooter || reinterpret_cast<int (__fastcall*)(const void*)>(0xbfa4f0)(actor) > 0;
-        input.ignoreWhenNoRanged = flag(0x37) && flag(5);
-        const auto* army = reinterpret_cast<const uint32_t*>(input.army);
-        if (army != nullptr && army[0] == 0xe17bcc && army[0x2c / 4] >= army[0x28 / 4]
-            && (army[0x2c / 4] - army[0x28 / 4]) % 4 == 0) {
-            input.armySize = (army[0x2c / 4] - army[0x28 / 4]) / 4;
-        } else input.unsupported |= 256;
-        bool excludedCategory = false;
-        const auto* role = reinterpret_cast<const uint32_t*>(integer(0x7c));
-        if (role != nullptr) {
-            const auto* roleMethods = reinterpret_cast<const uint32_t*>(role[0]);
-            const auto* definition = reinterpret_cast<const uint32_t* (__thiscall*)(const void*)>(roleMethods[0])(role);
-            excludedCategory = definition != nullptr && definition[0x1c / 4] == 2;
-        }
-        input.category = SelectPlacementDamageCategory(excludedCategory, shooter, !shooter && boolean(0x190),
-                                                        input.specialCategory != 0, input.ignoreWhenNoRanged != 0);
-        input.skipSpeed = (flag(1) ? 1u : 0u) | ((flag(4) && shooter) ? 2u : 0u) | (shooter ? 4u : 0u);
-        input.selected = reinterpret_cast<uint32_t>(actor) == selected;
-        input.retaliationBonus = boolean(0x1e4) && !flag(0x22);
-        const auto* source = reinterpret_cast<const uint32_t*>(integer(0x6c));
-        if (source != nullptr) {
-            const auto* sourceMethods = reinterpret_cast<const uint32_t*>(source[0]);
-            const auto* descriptor = reinterpret_cast<const uint32_t* (__thiscall*)(const void*)>(sourceMethods[0])(source);
-            if (descriptor != nullptr) {
-                input.source = reinterpret_cast<uint32_t>(descriptor);
-                input.type = descriptor[0x1c / 4];
-                input.quantity = descriptor[0x20 / 4];
-                input.counterMaximum[1] = reinterpret_cast<int (__thiscall*)(const void*)>(0x4bab70)(descriptor);
-                input.counterMaximum[2] = reinterpret_cast<int (__thiscall*)(const void*)>(0x4bab80)(descriptor);
-                input.counterCurrent[1] = reinterpret_cast<int (__thiscall*)(const void*)>(sourceMethods[0x2c / 4])(source);
-                input.counterCurrent[2] = reinterpret_cast<int (__thiscall*)(const void*)>(sourceMethods[0x34 / 4])(source);
-            } else input.unsupported |= 4;
-            if (integer(0) == 1) {
-                const auto* secondary = reinterpret_cast<const int32_t*>(source[1]);
-                const void* eligible = reinterpret_cast<const unsigned char*>(source) + 4 + secondary[2];
-                const auto* eligibleMethods = *reinterpret_cast<const uint32_t* const*>(eligible);
-                input.eligible = !reinterpret_cast<bool (__thiscall*)(const void*)>(eligibleMethods[0x58 / 4])(eligible);
-            }
-        } else input.unsupported |= 4;
-        if ((input.skipSpeed & 1u) && !shooter) input.unsupported |= 8;
-        input.counterMaximum[0] = integer(0x238);
-        input.counterCurrent[0] = integer(0x234);
-        if (reinterpret_cast<float (__fastcall*)(const void*)>(0xbfb3d0)(actor) != 0) input.unsupported |= 32;
-        const uint32_t effects[] = {0x28u, 0x22u, 0x1du, 0x13du, 0x13u, 0xc9u, 0x14au, 0x150u, 0x9fu, 0x11u};
-        for (const uint32_t effect : effects) {
-            if (status(effect)) input.unsupported |= 64;
-        }
-        if (flag(0x28)) {
-            const bool alternative = status(0x100) != 0;
-            input.healthTransformFlags = alternative ? 3 : 1;
-            const double scale = *reinterpret_cast<const double*>(alternative ? 0xe72bf8 : 0xe87cf8);
-            memcpy(input.healthScaleBits, &scale, sizeof(scale));
-        }
+    h5::army::ReadActorInputValues(actor, aggregateIdentity, damage, selected, specialCategory,
+        static_cast<uint32_t>(g_attackGeneration), input, SelectPlacementDamageCategory);
+    h5::army::AuxiliaryPowerInput protection[2]{};
+    h5::army::AuxiliaryPowerInput runic[h5::army::ActorRunicInputCapacity]{};
+    uint32_t runicCount = 0;
+    if (!h5::army::ReadActorRunicInputs(actor, input, g_actorInputCount + 1, runic, runicCount)) {
+        input.unsupported |= 1024;
     }
+    uint32_t protectionCount = 0;
+    if (!h5::army::ReadActorProtectionInputs(actor, input, g_actorInputCount + 1,
+        protection, protectionCount)) { input.unsupported |= 512; }
     if (!g_actorInputsFrozen && input.attackGeneration == static_cast<uint32_t>(g_actorInputGeneration)) {
         InterlockedIncrement(&g_actorInputSequence);
         g_actorInputs[g_actorInputCount] = input;
         ++g_actorInputCount;
+        if (g_auxiliaryInputCount + protectionCount + runicCount > h5_preview::PlacementAuxiliaryInputCapacity) { g_auxiliaryInputOverflow = 1; }
+        else {
+            for (uint32_t index = 0; index < protectionCount; ++index) {
+                g_auxiliaryInputs[g_auxiliaryInputCount++] = protection[index];
+            }
+            for (uint32_t index = 0; index < runicCount; ++index) {
+                g_auxiliaryInputs[g_auxiliaryInputCount++] = runic[index];
+            }
+        }
         InterlockedIncrement(&g_actorInputSequence);
     }
     g_actorInputBusy = false;
@@ -2218,63 +1819,7 @@ void PrepareSourceComposition(const uint32_t* owner) {
     InterlockedIncrement(&g_actorInputSequence);
 }
 
-bool BuildFrozenPlacementCore(const FrozenActorInput* inputs, uint32_t count,
-                              uint32_t world, uint32_t army, uint32_t generation,
-                              PlacementAggregate& result, uint32_t& stackCount, uint32_t* inputEnd = nullptr,
-                              uint32_t includedMask = UINT_MAX) {
-    stackCount = 0;
-    if (inputEnd != nullptr) *inputEnd = 0;
-    if (inputs == nullptr || count == 0 || count > kActorInputCapacity || world == 0 || army == 0) return false;
-    const auto matches = [&](const FrozenActorInput& input) {
-        return input.world == world && input.army == army && input.attackGeneration == generation;
-    };
-    uint32_t last = count;
-    while (last != 0 && !matches(inputs[last - 1])) --last;
-    if (last == 0) return false;
-    const uint32_t identity = inputs[last - 1].aggregateIdentity;
-    if (identity == 0) return false;
-    uint32_t first = last - 1;
-    while (first != 0 && matches(inputs[first - 1]) && inputs[first - 1].aggregateIdentity == identity) --first;
-    if (last - first > 7) return false;
-    for (uint32_t index = first; index < last; ++index) {
-        const auto& input = inputs[index];
-        if (input.unsupported || input.source == 0 || input.type == 0 || input.quantity == 0
-            || input.controlWord > 0xffff || input.category > 3) return false;
-        for (uint32_t earlier = first; earlier < index; ++earlier) {
-            // A repeated source can mark an unobserved aggregate reset. Do not
-            // merge distinct passes merely because a scratch address repeats.
-            if (inputs[earlier].source == input.source) return false;
-        }
-    }
-    PlacementAggregate aggregate;
-    PlacementWeights weights;
-    InitializePlacementAggregate(aggregate, weights);
-    uint16_t originalControl;
-    __asm fnstcw originalControl
-    uint32_t includedCount = 0;
-    for (uint32_t index = first; index < last; ++index) {
-        if (!(includedMask & (1u << (index - first)))) continue;
-        ++includedCount;
-        const auto& input = inputs[index];
-        const uint16_t control = static_cast<uint16_t>(input.controlWord);
-        __asm fldcw control
-        BaselineActionFactorInput action{input.morale, input.luck, input.speed, input.initiative, input.atb,
-            (input.skipSpeed & 1u) != 0, input.selected != 0, input.retaliationBonus != 0};
-        action.halfRangedFactor = (input.skipSpeed & 2u) != 0;
-        memcpy(action.counterMaximum, input.counterMaximum, sizeof(action.counterMaximum));
-        memcpy(action.counterCurrent, input.counterCurrent, sizeof(action.counterCurrent));
-        AccumulatePlacementDamage(aggregate, weights, static_cast<int32_t>(input.damage), input.attack,
-                                  BaselineActionFactor(action), input.category);
-        const int32_t health = TransformPlacementHealth(input.health, input.healthTransformFlags, input.healthScaleBits);
-        AccumulatePlacementHealth(aggregate, weights, health, input.defence, input.defence, input.eligible != 0);
-    }
-    NormalizePlacementAggregate(aggregate, weights);
-    __asm fldcw originalControl
-    result = aggregate;
-    stackCount = includedCount;
-    if (inputEnd != nullptr) *inputEnd = last;
-    return true;
-}
+// Shared actor aggregate builder: placement_calculations.hpp.
 
 void PrepareSuperadminAggregates() {
     InterlockedIncrement(&g_actorInputSequence);
@@ -2300,33 +1845,15 @@ void PrepareSuperadminAggregates() {
         PlacementAggregate aggregate;
         uint32_t inputEnd = 0;
         if (BuildFrozenPlacementCore(g_actorInputs, g_actorInputCount, g_actorInputWorld, army,
-                g_actorInputGeneration, aggregate, g_actorCoreStackCounts[side], &inputEnd)) {
+                g_actorInputGeneration, aggregate, g_actorCoreStackCounts[side], &inputEnd, UINT_MAX,
+                g_auxiliaryInputs, g_auxiliaryInputCount)) {
             const uint32_t inputBegin = inputEnd - g_actorCoreStackCounts[side];
-            for (uint32_t index = 0; index < g_auxiliaryInputCount; ++index) {
-                const auto& extra = g_auxiliaryInputs[index];
-                if (extra.aggregateIdentity != g_actorInputs[inputEnd - 1].aggregateIdentity
-                    || extra.attackGeneration != static_cast<uint32_t>(g_actorInputGeneration)) continue;
-                const bool physical = extra.caller == 0xbfbb90 || extra.caller == 0xbfbbc3;
-                const bool hero = extra.caller == 0xbfc194;
-                if ((physical && extra.inputCount > inputBegin && extra.inputCount <= inputEnd)
-                    || (hero && extra.inputCount == inputEnd)) {
-                    aggregate.extra2 = static_cast<int32_t>(static_cast<uint32_t>(aggregate.extra2)
-                        + static_cast<uint32_t>(extra.value));
-                    g_auxiliaryMask |= 1u << side;
-                }
-            }
-            for (uint32_t index = g_heroCorrectionCount; index != 0; --index) {
-                const auto& correction = g_heroCorrections[index - 1];
-                if (correction.aggregateIdentity != g_actorInputs[inputEnd - 1].aggregateIdentity
-                    || correction.inputCount != inputEnd || correction.attackGeneration != static_cast<uint32_t>(g_actorInputGeneration)) continue;
-                uint16_t original, captured = static_cast<uint16_t>(correction.controlWord);
-                __asm fnstcw original
-                __asm fldcw captured
-                aggregate.multiplier = ApplyHeroActionCorrection(aggregate.multiplier, correction.firstScalar, correction.secondScalar);
-                __asm fldcw original
-                g_heroCorrectionMask |= 1u << side;
-                break;
-            }
+            uint32_t applied = 0;
+            if (!ApplyCapturedPlacementCorrections(g_actorInputs, g_actorInputCount, inputBegin, inputEnd,
+                    g_actorInputGeneration, g_auxiliaryInputs, g_auxiliaryInputCount,
+                    g_heroCorrections, g_heroCorrectionCount, aggregate, applied)) { continue; }
+            if (applied & 1u) { g_auxiliaryMask |= 1u << side; }
+            if (applied & 2u) { g_heroCorrectionMask |= 1u << side; }
             memcpy(g_actorCoreWords[side], &aggregate, sizeof(aggregate));
             g_actorCoreInputEnds[side] = inputEnd;
             g_actorCoreMask |= 1u << side;
@@ -2337,7 +1864,7 @@ void PrepareSuperadminAggregates() {
 
 void __cdecl CaptureSuperadminHeroCorrection(uint32_t aggregateIdentity, int32_t firstScalar, int32_t secondScalar) {
     if (!g_superadminEnabled || g_actorInputsFrozen || g_actorInputGeneration != g_attackGeneration) return;
-    if (g_heroCorrectionCount >= 64) {
+    if (g_heroCorrectionCount >= h5_preview::PlacementHeroCorrectionCapacity) {
         g_heroCorrectionOverflow = 1;
         return;
     }
@@ -2510,7 +2037,7 @@ void __cdecl CaptureAreaSpellInput(const uint32_t* actor, uint32_t horizon, uint
 void __cdecl CaptureSuperadminAuxiliaryPower(uint32_t aggregateIdentity, int32_t value, uint32_t caller) {
     if (!g_superadminEnabled || g_actorInputsFrozen || g_areaInputBusy || g_actorInputGeneration != g_attackGeneration
         || (caller != 0xbfbb90 && caller != 0xbfbbc3 && caller != 0xbfc194)) return;
-    if (g_auxiliaryInputCount >= 256) {
+    if (g_auxiliaryInputCount >= h5_preview::PlacementAuxiliaryInputCapacity) {
         g_auxiliaryInputOverflow = 1;
         return;
     }
@@ -2564,34 +2091,16 @@ bool BuildFrozenOwnSubset(uint32_t mask, PlacementAggregate& result) {
     const auto& anchor = g_actorInputs[end - 1];
     uint32_t selectedCount;
     if (!BuildFrozenPlacementCore(g_actorInputs + begin, count, g_actorInputWorld, anchor.army,
-                                  g_actorInputGeneration, result, selectedCount, nullptr, mask)) return false;
+                                  g_actorInputGeneration, result, selectedCount, nullptr, mask,
+                                  g_auxiliaryInputs, g_auxiliaryInputCount, begin)) return false;
     const auto* complete = reinterpret_cast<const PlacementAggregate*>(g_actorCoreWords[0]);
     result.extra0 = complete->extra0;
     result.unused = complete->unused;
     result.magicPower = complete->magicPower;
-    for (uint32_t index = 0; index < g_auxiliaryInputCount; ++index) {
-        const auto& extra = g_auxiliaryInputs[index];
-        if (extra.aggregateIdentity != anchor.aggregateIdentity || extra.attackGeneration != anchor.attackGeneration) continue;
-        const bool hero = extra.caller == 0xbfc194 && extra.inputCount == end;
-        const bool selected = (extra.caller == 0xbfbb90 || extra.caller == 0xbfbbc3)
-            && extra.inputCount > begin && extra.inputCount <= end
-            && (mask & (1u << (extra.inputCount - begin - 1)));
-        if (hero || selected) result.extra2 = static_cast<int32_t>(static_cast<uint32_t>(result.extra2)
-                                                                 + static_cast<uint32_t>(extra.value));
-    }
-    for (uint32_t index = g_heroCorrectionCount; index; --index) {
-        const auto& correction = g_heroCorrections[index - 1];
-        if (correction.aggregateIdentity == anchor.aggregateIdentity && correction.inputCount == end
-            && correction.attackGeneration == anchor.attackGeneration) {
-            uint16_t original, captured = static_cast<uint16_t>(correction.controlWord);
-            __asm fnstcw original
-            __asm fldcw captured
-            result.multiplier = ApplyHeroActionCorrection(result.multiplier, correction.firstScalar, correction.secondScalar);
-            __asm fldcw original
-            break;
-        }
-    }
-    return true;
+    uint32_t applied = 0;
+    return ApplyCapturedPlacementCorrections(g_actorInputs, g_actorInputCount, begin, end,
+        g_actorInputGeneration, g_auxiliaryInputs, g_auxiliaryInputCount,
+        g_heroCorrections, g_heroCorrectionCount, result, applied, mask);
 }
 
 bool CalculateFrozenAreaNumerator(int& numerator) {
@@ -2646,15 +2155,6 @@ bool CalculateFrozenAreaNumerator(int& numerator) {
     return true;
 }
 
-bool FrozenArmyRangedCapability(const FrozenActorInput* inputs, uint32_t inputEnd,
-                               uint32_t stackCount, bool noRanged) {
-    for (uint32_t index = inputEnd - stackCount; index < inputEnd; ++index) {
-        if (noRanged && inputs[index].ignoreWhenNoRanged) continue;
-        if (!inputs[index].rangedCapability) return false;
-    }
-    return true;
-}
-
 void PrepareSuperadminStrategy() {
     InterlockedIncrement(&g_actorInputSequence);
     memset(g_strategyTrace, 0, sizeof(g_strategyTrace));
@@ -2699,8 +2199,6 @@ void PrepareSuperadminStrategy() {
         const int enemyTotal = total(enemy, own);
         const int enemyRanged = ranged(enemy, own);
         const int ownRanged = ranged(own, enemy);
-        const float share = enemyTotal > 0 ? PlacementRatio(enemyRanged, enemyTotal) : 0;
-        const float advantage = ownRanged == 0 ? 100.0f : PlacementRatio(enemyRanged, ownRanged);
         const bool enemyCapability = FrozenArmyRangedCapability(g_actorInputs, enemyEnd, enemyCount, ownRanged == 0);
         const bool ownCapability = FrozenArmyRangedCapability(g_actorInputs, g_actorCoreInputEnds[0],
                                                             g_actorCoreStackCounts[0], enemyRanged == 0);
@@ -2754,19 +2252,10 @@ void PrepareSuperadminStrategy() {
             g_areaPolicyTrace[2] = static_cast<uint32_t>(spreadDenominator);
             memcpy(g_areaPolicyTrace + 3, &ratio, 4);
         }
-        const bool defensive = enemyTotal > 0 && (enemyCapability || (share > shareThreshold && advantage > advantageThreshold))
-            && !ownCapability;
+        WriteDefensiveStrategy(enemyTotal, enemyRanged, ownRanged, enemyCapability, ownCapability,
+            shareThreshold, advantageThreshold, g_strategyTrace);
         __asm fldcw original
-        g_strategyTrace[0] = 1;
-        g_strategyTrace[1] = defensive;
-        g_strategyTrace[2] = enemyRanged;
-        g_strategyTrace[3] = enemyTotal;
-        g_strategyTrace[4] = ownRanged;
-        memcpy(g_strategyTrace + 5, &share, 4);
-        memcpy(g_strategyTrace + 6, &advantage, 4);
-        g_strategyTrace[7] = enemyCapability;
-        g_strategyTrace[8] = ownCapability;
-        g_predictedDefensive = defensive;
+        g_predictedDefensive = g_strategyTrace[1] != 0;
     }
     InterlockedIncrement(&g_actorInputSequence);
 }
@@ -2835,7 +2324,7 @@ bool PrepareScriptedPreviewSource() {
         || g_superadminSourceCount < 1 || g_superadminSourceCount > 7
         || g_superadminSourceGeneration != g_placementGeneration
         || g_actorInputGeneration != g_attackGeneration || g_attackGeneration == 0
-        || g_actorInputOverflow || g_actorInputCount < 1 || g_actorInputCount > 256) return false;
+        || g_actorInputOverflow || g_actorInputCount < 1 || g_actorInputCount > kActorInputCapacity) return false;
     uint32_t pointers[7]{};
     int32_t speeds[7]{};
     uint32_t flying[7]{};
@@ -2919,21 +2408,96 @@ void CaptureSuperadminSource(const uint32_t* object) {
     g_superadminSourceModifiersKnown = true;
 }
 
-// The stock public model contains qualitative count text for each portrait.
+uint32_t ParseDisclosedQuantity(const wchar_t* label, uint32_t length) {
+    if (!label || !length || length > 10) { return 0; }
+    uint32_t quantity = 0;
+    for (uint32_t index = 0; index < length; ++index) {
+        if (label[index] < L'0' || label[index] > L'9') { return 0; }
+        const uint32_t digit = label[index] - L'0';
+        if (quantity > (static_cast<uint32_t>(INT_MAX) - digit) / 10) { return 0; }
+        quantity = quantity * 10 + digit;
+    }
+    return quantity;
+}
+
+uint32_t CopyPublicQuantityLabel(const wchar_t* label, uint32_t length, wchar_t (&output)[32]) {
+    memset(output, 0, sizeof(output));
+    if (!label || !length || length > 64) { return 0; }
+    const uint32_t exact = ParseDisclosedQuantity(label, length);
+    if (exact) { memcpy(output, label, length * sizeof(wchar_t)); return exact; }
+    // Universe adds localized words and color tags around the displayed
+    // interval. Keep only the parenthesized numeric interval for our own UI.
+    for (uint32_t start = 0; start < length; ++start) {
+        if (label[start] != L'(') { continue; }
+        uint32_t end = start + 1, separator = 0;
+        while (end < length && label[end] != L')') {
+            if (label[end] == L'-') { if (separator) { break; } separator = end; }
+            else if (label[end] < L'0' || label[end] > L'9') { break; }
+            ++end;
+        }
+        if (!separator && end + 1 < length && label[end] == L'+' && label[end + 1] == L')' &&
+            end - start < 32 && ParseDisclosedQuantity(label + start + 1, end - start - 1)) {
+            memcpy(output, label + start + 1, (end - start) * sizeof(wchar_t)); return 0;
+        }
+        if (end >= length || label[end] != L')' || !separator || end - start - 1 >= 32) { continue; }
+        const uint32_t lower = ParseDisclosedQuantity(label + start + 1, separator - start - 1);
+        const uint32_t upper = ParseDisclosedQuantity(label + separator + 1, end - separator - 1);
+        if (!lower || !upper || lower > upper) { continue; }
+        memcpy(output, label + start + 1, (end - start - 1) * sizeof(wchar_t));
+        return 0;
+    }
+    return 0;
+}
+
+uint32_t PublicQuantityEstimate(uint32_t index, bool lowerBound) {
+    if (index >= 7) { return 0; }
+    if (g_publicKnownCounts[index]) { return g_publicKnownCounts[index]; }
+    const auto* label = g_publicQuantityLabels[index];
+    uint32_t length = 0, separator = 0;
+    while (length < 32 && label[length]) {
+        if (label[length] == L'-' || label[length] == L'+') { separator = length; }
+        ++length;
+    }
+    if (length < 32 && separator) {
+        const uint32_t lower = ParseDisclosedQuantity(label, separator);
+        if (lower && label[separator] == L'+' && separator + 1 == length) { return lower; }
+        const uint32_t upper = ParseDisclosedQuantity(label + separator + 1, length - separator - 1);
+        if (lower && upper >= lower && label[separator] == L'-') {
+            return lowerBound ? lower : static_cast<uint32_t>((static_cast<uint64_t>(lower) + upper + 1) / 2);
+        }
+    }
+    // Compatibility for a stock qualitative label without a numeric interval.
+    // These estimates remain internal; only a disclosed count is published.
+    constexpr uint32_t lower[]{0, 1, 5, 10, 20, 50, 100, 250, 500, 1000};
+    constexpr uint32_t representative[]{0, 3, 7, 15, 35, 75, 175, 375, 750, 1000};
+    const uint32_t band = g_publicBands[index];
+    return band <= 9 ? (lowerBound ? lower[band] : representative[band]) : 0;
+}
+
+// The stock public model contains qualitative or legitimately disclosed exact
+// count text. Its own visibility gate includes Scouting and artifact effects.
 // Compare it with labels built by the same game function for representative
 // public ranges. No monster quantity or combat stack is read here.
 void __cdecl CapturePublicBands(const uint32_t* model) {
     memset(g_publicBands, 0, sizeof(g_publicBands));
+    memset(g_publicKnownCounts, 0, sizeof(g_publicKnownCounts));
+    memset(g_publicQuantityLabels, 0, sizeof(g_publicQuantityLabels));
     if (model == nullptr) return;
     const uintptr_t begin = model[0x50 / 4];
     const uintptr_t end = model[0x54 / 4];
     if (end < begin || (end - begin) % 24 != 0 || (end - begin) / 24 > 7) return;
+    const bool single = begin == end;
+    const uintptr_t first = single ? reinterpret_cast<uintptr_t>(model) + 0x1c : begin;
+    const uintptr_t last = single ? first + 24 : end;
     const int representatives[] = {1, 5, 10, 20, 50, 100, 250, 500, 1000};
-    for (uintptr_t rowAddress = begin, index = 0; rowAddress < end; rowAddress += 24, ++index) {
+    for (uintptr_t rowAddress = first, index = 0; rowAddress < last; rowAddress += 24, ++index) {
         const auto* row = reinterpret_cast<const uint32_t*>(rowAddress);
-        const uintptr_t labelBegin = row[0xc / 4];
-        const uintptr_t labelEnd = row[0x10 / 4];
+        const uintptr_t labelBegin = row[(single ? 8 : 12) / 4];
+        const uintptr_t labelEnd = row[(single ? 12 : 16) / 4];
         if (labelEnd <= labelBegin || labelEnd - labelBegin > 128 || (labelEnd - labelBegin) % 2 != 0) continue;
+        g_publicKnownCounts[index] = CopyPublicQuantityLabel(reinterpret_cast<const wchar_t*>(labelBegin),
+            static_cast<uint32_t>((labelEnd - labelBegin) / sizeof(wchar_t)), g_publicQuantityLabels[index]);
+        if (g_publicKnownCounts[index]) { continue; }
         for (unsigned band = 0; band < 9; ++band) {
             uint32_t reference[3]{};
             reinterpret_cast<uint32_t* (__fastcall*)(uint32_t*, int)>(0x4bc930)(reference, representatives[band]);
@@ -3229,12 +2793,12 @@ __declspec(naked) void DeploymentEndHook() {
     }
 }
 
-__declspec(naked) void RendererHook() {
+__declspec(naked) void __stdcall RenderPlacementModels(uint32_t owner, uint32_t rootArgument,
+    uint32_t factoryArgument, uint32_t angle) {
     __asm {
         pushfd
         pushad
-        cmp dword ptr [esp + 36], 0x57788f
-        jne resume
+        mov edi, dword ptr [esp + 40]
         cmp edi, dword ptr [g_placementOwner]
         jne resume
         mov eax, dword ptr [g_placementGeneration]
@@ -3250,6 +2814,34 @@ __declspec(naked) void RendererHook() {
     source_ready:
         cmp dword ptr [g_publicCount], 0
         je resume
+        // Private decision journal in the unused output-scratch region. The
+        // existing model vectors and occupancy maps retain their layout.
+        mov dword ptr [g_outputStorage + 8 + 976], 0
+        mov dword ptr [g_outputStorage + 8 + 984], 0
+        mov dword ptr [g_outputStorage + 8 + 988], 0
+        cmp byte ptr [g_superadminEnabled], 0
+        je decision_trace_initialized
+        mov dword ptr [g_outputStorage + 8 + 976], 1
+        mov eax, dword ptr [g_placementGeneration]
+        mov dword ptr [g_outputStorage + 8 + 980], eax
+    decision_trace_initialized:
+        // Retain each emitted slot's sorted-record identity. Public text must
+        // follow placement phases, including repeated creature types.
+        push eax
+        push ecx
+        push edi
+        lea edi, [g_outputStorage + 8 + 1368]
+        mov eax, -1
+        mov ecx, 7
+        rep stosd
+        pop edi
+        pop ecx
+        pop eax
+        // The private geometry pass borrows the planner, not ownership of the
+        // visible models. It must leave their vectors and render generation
+        // intact so the user projection can still render afterwards.
+        cmp dword ptr [g_outputStorage + 8 + 1364], 0
+        jne renderer_inputs_ready
         mov ecx, offset g_outputStorage + 8
         mov eax, 0x576b40
         call eax
@@ -3275,13 +2867,12 @@ __declspec(naked) void RendererHook() {
           mov dword ptr [g_renderedGeneration], eax
           mov dword ptr [g_outputStorage + 8 + 728], edi
           inc dword ptr [g_renderCalls]
-        mov eax, dword ptr [esp + 56]
+    renderer_inputs_ready:
+        mov eax, dword ptr [esp + 44]
         mov dword ptr [g_rendererRootArgument], eax
-        mov eax, dword ptr [esp + 72]
+        mov eax, dword ptr [esp + 48]
         mov dword ptr [g_rendererFactoryArgument], eax
-        // Renderer argument 7 is a degree angle, not the root-model pointer.
-        // Face the public defender ghosts opposite the native attacker.
-        mov eax, dword ptr [esp + 64]
+        mov eax, dword ptr [esp + 52]
         add eax, 180
         mov dword ptr [g_outputStorage + 8 + 760], eax
         mov dword ptr [g_root], edi
@@ -3374,6 +2965,7 @@ __declspec(naked) void RendererHook() {
         mov dword ptr [g_outputStorage + 8 + 496], 0
         mov dword ptr [g_outputStorage + 8 + 952], 0
     model_loop:
+        mov dword ptr [g_outputStorage + 8 + 1360], 0
         cmp dword ptr [g_candidateIdentity], 6
         jl primary_model_index
         mov esi, dword ptr [g_outputStorage + 8 + 952]
@@ -3490,6 +3082,7 @@ __declspec(naked) void RendererHook() {
         shr esi, 8
         mov eax, dword ptr [g_outputStorage + 8 + 496]
         lea edx, [g_cell + eax * 8]
+        mov dword ptr [g_outputStorage + 8 + 1360], 2
         jmp cell_selected
     simple_layout_unavailable:
         cmp dword ptr [g_candidateIdentity], 6
@@ -3523,6 +3116,7 @@ __declspec(naked) void RendererHook() {
         inc edi
         jmp solo_next_row
     solo_cell_selected:
+        mov dword ptr [g_outputStorage + 8 + 1360], 6
         lea edx, [g_cell]
         jmp cell_selected
     rank_row:
@@ -3535,6 +3129,7 @@ __declspec(naked) void RendererHook() {
         shr esi, 8
         mov eax, dword ptr [g_outputStorage + 8 + 496]
         lea edx, [g_cell + eax * 8]
+        mov dword ptr [g_outputStorage + 8 + 1360], 5
         jmp cell_selected
     residual_cell:
         mov esi, dword ptr [g_outputStorage + 8 + 384]
@@ -3569,6 +3164,7 @@ __declspec(naked) void RendererHook() {
     residual_save_cell:
         mov eax, dword ptr [g_outputStorage + 8 + 496]
         lea edx, [g_cell + eax * 8]
+        mov dword ptr [g_outputStorage + 8 + 1360], 4
         jmp cell_selected
     linked_cell_unavailable:
         cmp byte ptr [g_predictedDefensive], 0
@@ -3588,6 +3184,7 @@ __declspec(naked) void RendererHook() {
         shr esi, 8
         mov eax, dword ptr [g_outputStorage + 8 + 496]
         lea edx, [g_cell + eax * 8]
+        mov dword ptr [g_outputStorage + 8 + 1360], 3
         jmp cell_selected
     ordinary_rank_row:
         mov byte ptr [g_spreadFallback], 0
@@ -3674,6 +3271,9 @@ __declspec(naked) void RendererHook() {
         cmp edi, eax
         jl window_next
     rank_window_ready:
+        call SpreadSecondRowUsesOwnPriority
+        movzx eax, al
+        mov dword ptr [g_outputStorage + 8 + 1396], eax
         mov dword ptr [g_outputStorage + 8 + 744], -1
         mov dword ptr [g_outputStorage + 8 + 748], -1
         mov edi, 1
@@ -3751,6 +3351,21 @@ __declspec(naked) void RendererHook() {
         jle rank_compare
         mov eax, edi
         dec eax
+        // Spread intersects the ranked local-row list before 857160 shifts
+        // an invalid 2x2 anchor. Its local-zero candidate keeps local-zero's
+        // window score as well as its tie rank (RMG-B generation440).
+        cmp dword ptr [g_creatureDefinition], 2
+        jne shooter_candidate_row_ready
+        cmp byte ptr [g_useSpreadRows], 0
+        je shooter_candidate_row_ready
+        cmp byte ptr [g_spreadFallback], 0
+        jne shooter_candidate_row_ready
+        cmp edi, 2
+        jne shooter_candidate_row_ready
+        cmp dword ptr [g_outputStorage + 8 + 1396], 0
+        jne shooter_candidate_row_ready
+        xor eax, eax
+    shooter_candidate_row_ready:
         sub eax, dword ptr [g_outputStorage + 8 + 784]
         jns shooter_window_distance
         add eax, dword ptr [g_outputStorage + 8 + 388]
@@ -3779,7 +3394,8 @@ __declspec(naked) void RendererHook() {
         mov eax, edi
         dec eax
         // A 2x2 spread stack can occupy y=2 when local row zero (y=1) is
-        // illegal. Keep row zero's tie rank; do not promote it to row one's.
+        // illegal. Keep row zero's tie rank only when local row one is absent
+        // from the spaced list; otherwise it is a separate real candidate.
         cmp byte ptr [g_useSpreadRows], 0
         je priority_row_ready
         cmp byte ptr [g_spreadFallback], 0
@@ -3787,6 +3403,8 @@ __declspec(naked) void RendererHook() {
         cmp dword ptr [g_creatureDefinition], 2
         jne priority_row_ready
         cmp edi, 2
+        jne priority_row_ready
+        cmp dword ptr [g_outputStorage + 8 + 1396], 0
         jne priority_row_ready
         xor eax, eax
     priority_row_ready:
@@ -3823,16 +3441,20 @@ __declspec(naked) void RendererHook() {
         jne rank_selected
         cmp byte ptr [g_useSpreadRows], 0
         je next_model
+        // Extended native deployment leaves exhausted spread records unplaced;
+        // 8598e0 later scans column0 then column1 through857640/857780.
+        cmp byte ptr [g_superadminEnabled], 0
+        jne next_model
         cmp byte ptr [g_spreadFallback], 0
         jne next_model
-        // Native spread keeps an ordinary candidate list if its restricted
-        // list cannot place a stack on this arena.
+        // Preserve the ordinary estimated-mode fallback independently.
         mov byte ptr [g_spreadFallback], 1
         mov dword ptr [g_outputStorage + 8 + 744], -1
         mov dword ptr [g_outputStorage + 8 + 748], -1
         mov edi, 1
         jmp rank_next
     rank_selected:
+        mov dword ptr [g_outputStorage + 8 + 1360], 1
         mov edi, edx
         mov esi, dword ptr [g_outputStorage + 8 + 384]
         sub esi, 4
@@ -3849,6 +3471,49 @@ __declspec(naked) void RendererHook() {
         mov dword ptr [edx], esi
         mov dword ptr [edx + 4], edi
         mov dword ptr [g_outputStorage + 8 + 736], edx
+        pushfd
+        pushad
+        mov ecx, dword ptr [g_outputStorage + 8 + 496]
+        cmp ecx, 7
+        jae decision_record_finished
+        mov eax, dword ptr [g_definitionMaximum]
+        mov dword ptr [g_outputStorage + 8 + ecx * 4 + 1368], eax
+        cmp byte ptr [g_projectionPlanning], 0
+        je decision_record_finished
+        mov ebx, ecx
+        imul ebx, 52
+        add ebx, offset g_outputStorage + 8 + 992
+        mov eax, dword ptr [g_outputStorage + 8 + ecx * 4 + 640]
+        mov dword ptr [ebx], eax
+        mov eax, dword ptr [g_outputStorage + 8 + ecx * 4 + 864]
+        mov dword ptr [ebx + 4], eax
+        mov eax, dword ptr [g_creatureDefinition]
+        mov dword ptr [ebx + 8], eax
+        lea eax, [ecx + 1]
+        mov dword ptr [ebx + 12], eax
+        mov dword ptr [g_outputStorage + 8 + 984], eax
+        mov eax, dword ptr [g_candidateIdentity]
+        mov dword ptr [ebx + 16], eax
+        mov eax, dword ptr [g_outputStorage + 8 + 740]
+        mov dword ptr [ebx + 20], eax
+        mov eax, dword ptr [g_cell + ecx * 8]
+        mov dword ptr [ebx + 24], eax
+        mov eax, dword ptr [g_cell + ecx * 8 + 4]
+        mov dword ptr [ebx + 28], eax
+        mov eax, dword ptr [g_outputStorage + 8 + 784]
+        mov dword ptr [ebx + 32], eax
+        mov eax, dword ptr [g_outputStorage + 8 + 796]
+        mov dword ptr [ebx + 36], eax
+        mov eax, dword ptr [g_outputStorage + 8 + 1360]
+        mov dword ptr [ebx + 40], eax
+        movzx eax, byte ptr [g_predictedDefensive]
+        mov dword ptr [ebx + 44], eax
+        movzx eax, byte ptr [g_useSpreadRows]
+        mov dword ptr [ebx + 48], eax
+    decision_record_finished:
+        popad
+        popfd
+    decision_record_ready:
         mov esi, dword ptr [edx]
         mov edi, dword ptr [edx + 4]
         call footprint_occupy
@@ -4071,10 +3736,16 @@ __declspec(naked) void RendererHook() {
         call ExcludeWeakestProjection
         test al, al
         jz plan_failed
+        mov dword ptr [g_outputStorage + 8 + 984], 0
         call ResetProjectionAttempt
         jmp model_loop
     plan_succeeded:
+        mov dword ptr [g_outputStorage + 8 + 988], 1
         mov byte ptr [g_projectionPlanning], 0
+        // A reference pass can stop at the already existing geometry plan,
+        // without allocating/drawing another set of creature models.
+        cmp dword ptr [g_outputStorage + 8 + 1364], 0
+        jne planning_finished
         call ResetProjectionAttempt
         jmp model_loop
     plan_failed:
@@ -4085,6 +3756,82 @@ __declspec(naked) void RendererHook() {
     resume:
         popad
         popfd
+        ret 16
+    }
+}
+
+// Both the original hook and the managed SDK adapter use these renderer inputs.
+// The caller borrows arguments synchronously; no frame/stack pointer is retained.
+void __stdcall RenderPlacementPreview(uint32_t owner, uint32_t caller,
+    uint32_t rootArgument, uint32_t factoryArgument, uint32_t angle) {
+    if (caller != h5::hooks::PlacementRendererCaller || owner != reinterpret_cast<uint32_t>(g_placementOwner)) { return; }
+    if (!g_superadminEnabled && g_neutralTypesUnknown) {
+        g_plannedProjectionCount = 0;
+        g_renderedGeneration = g_placementGeneration;
+        return;
+    }
+    RenderPlacementModels(owner, rootArgument, factoryArgument, angle);
+}
+
+bool PlanReferencePlacement(const PreciseResearchState& inputs, uint32_t owner,
+    uint32_t rootArgument, uint32_t factoryArgument, uint32_t angle,
+    h5_preview::PlacementDecisionTrace& result) {
+    result = {};
+    if (g_referenceCalculationActive || g_superadminEnabled || !owner ||
+        owner != reinterpret_cast<uint32_t>(g_placementOwner) || inputs.version != 3 ||
+        inputs.actorInputGeneration != g_attackGeneration || inputs.superadminSourceCount < 1 ||
+        inputs.superadminSourceCount > 7 || inputs.superadminSourceGeneration != g_placementGeneration) { return false; }
+    PublicPlannerState previousPolicy{}; previousPolicy.Save();
+    unsigned char previousOutput[sizeof(g_outputStorage)]; memcpy(previousOutput, g_outputStorage, sizeof(previousOutput));
+    uint32_t previousTypes[7], previousBands[7]; int previousCells[14], previousPositions[28];
+    memcpy(previousTypes, g_publicTypes, sizeof(previousTypes)); memcpy(previousBands, g_publicBands, sizeof(previousBands));
+    memcpy(previousCells, g_cell, sizeof(previousCells)); memcpy(previousPositions, g_position, sizeof(previousPositions));
+    const LONG previousCount = g_publicCount, previousRendered = g_renderedGeneration;
+    void* previousRoot = g_root; void* previousGrid = g_grid;
+    void* previousCreature = g_creatureDefinition; void* previousModel = g_modelDefinition;
+    const uint32_t previousRootArgument = g_rendererRootArgument, previousFactoryArgument = g_rendererFactoryArgument;
+    if (!inputs.Load()) { return false; }
+    alignas(16) unsigned char floatingState[512];
+    __asm { lea eax, floatingState }
+    __asm { fxsave [eax] }
+    g_referenceCalculationActive = true; g_superadminEnabled = true;
+    g_publicCount = inputs.superadminSourceKind == 2 ? 0 : inputs.superadminSourceCount;
+    memcpy(g_publicTypes, inputs.superadminSourceTypes, sizeof(g_publicTypes));
+    g_renderedGeneration = -1;
+    *reinterpret_cast<uint32_t*>(g_outputStorage + 8 + 1364) = 1;
+    __try {
+        RenderPlacementPreview(owner, h5::hooks::PlacementRendererCaller, rootArgument, factoryArgument, angle);
+        result = *reinterpret_cast<const h5_preview::PlacementDecisionTrace*>(g_outputStorage + 8 + 976);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { result = {}; }
+    previousPolicy.Load();
+    memcpy(g_outputStorage, previousOutput, sizeof(previousOutput));
+    memcpy(g_publicTypes, previousTypes, sizeof(previousTypes)); memcpy(g_publicBands, previousBands, sizeof(previousBands));
+    memcpy(g_cell, previousCells, sizeof(previousCells)); memcpy(g_position, previousPositions, sizeof(previousPositions));
+    g_publicCount = previousCount; g_renderedGeneration = previousRendered;
+    g_root = previousRoot; g_grid = previousGrid; g_creatureDefinition = previousCreature; g_modelDefinition = previousModel;
+    g_rendererRootArgument = previousRootArgument; g_rendererFactoryArgument = previousFactoryArgument;
+    g_referenceCalculationActive = false;
+    __asm { lea eax, floatingState }
+    __asm { fxrstor [eax] }
+    return result.version == 1 && result.complete == 1 && result.count > 0 && result.count <= 7 &&
+        result.placementGeneration == static_cast<uint32_t>(g_placementGeneration);
+}
+
+__declspec(naked) void RendererHook() {
+    __asm {
+        pushfd
+        pushad
+        mov eax, dword ptr [esp + 56]
+        mov ecx, dword ptr [esp + 72]
+        mov edx, dword ptr [esp + 64]
+        push edx
+        push ecx
+        push eax
+        push dword ptr [esp + 48]
+        push edi
+        call RenderPlacementPreview
+        popad
+        popfd
         push ebp
         mov ebp, esp
         and esp, 0xfffffff8
@@ -4093,17 +3840,13 @@ __declspec(naked) void RendererHook() {
     }
 }
 
-__declspec(naked) void HoverHook() {
+__declspec(naked) void __stdcall UpdatePlacementHover(uint32_t controller, const int* cell) {
     __asm {
         pushfd
         pushad
         fxsave [g_fpu]
+        mov edx, dword ptr [esp + 40]
         mov dword ptr [g_outputStorage + 8 + 508], edx
-        cmp dword ptr [esp + 36], 0x54589e
-        jne hover_input_ready
-        push esi
-        call AttachProjectionInput
-    hover_input_ready:
         mov esi, dword ptr [esp + 44]
         mov dword ptr [g_outputStorage + 8 + 504], 0
         test esi, esi
@@ -4149,10 +3892,31 @@ __declspec(naked) void HoverHook() {
         fxrstor [g_fpu]
         popad
         popfd
+        ret 8
+
+    }
+}
+
+__declspec(naked) void HoverHook() {
+    __asm {
+        pushfd
+        pushad
+        fxsave [g_fpu]
+        cmp dword ptr [esp + 36], 0x54589e
+        jne hover_input_ready
+        push esi
+        call AttachProjectionInput
+    hover_input_ready:
+        fxrstor [g_fpu]
+        mov eax, dword ptr [esp + 44]
+        push eax
+        push dword ptr [esp + 24]
+        call UpdatePlacementHover
+        popad
+        popfd
         sub esp, 0xbc
         push 0x5767a6
         ret
-
     }
 }
 
@@ -4310,56 +4074,36 @@ void __stdcall UpdateProjectionRange(unsigned slot, uint32_t* highlight) {
     highlight[10] = highlight[9];
 }
 
+void __stdcall ApplyProjectionOutline(uint32_t owner, uint32_t* highlight, int* bounds,
+    bool allowDetailsCallbacks) {
+    if (owner != reinterpret_cast<uint32_t>(g_placementOwner)) { return; }
+    alignas(16) unsigned char floatingState[512];
+    __asm { lea eax, floatingState }
+    __asm { fxsave [eax] }
+    UpdateProjectionGlows();
+    if (allowDetailsCallbacks) { ProcessProjectionDetails(); }
+    const int slot = HoveredProjectionSlot();
+    if (slot >= 0) {
+        UpdateProjectionRange(static_cast<unsigned>(slot), highlight);
+        const int size = *reinterpret_cast<const int*>(g_outputStorage + 8 + 600 + slot * 4);
+        const int x = g_cell[slot * 2], y = g_cell[slot * 2 + 1];
+        bounds[0] = x - size;bounds[1] = y;bounds[2] = x;bounds[3] = y - size;
+    }
+    __asm { lea eax, floatingState }
+    __asm { fxrstor [eax] }
+}
+
 __declspec(naked) void ProjectionOutlineHook() {
     __asm {
         pushfd
         pushad
-        cmp esi, dword ptr [g_placementOwner]
-        jne outline_done
-        fxsave [g_fpu]
-        call UpdateProjectionGlows
-        call ProcessProjectionDetails
-        fxrstor [g_fpu]
-        mov edx, dword ptr [g_outputStorage + 8 + 504]
-        test edx, edx
-        jz outline_done
-        xor ebx, ebx
-    outline_find:
-        cmp ebx, dword ptr [g_outputStorage + 8 + 496]
-        jae outline_done
-        cmp edx, dword ptr [g_outputStorage + 8 + ebx * 4 + 640]
-        jne outline_next
-        mov ecx, dword ptr [g_outputStorage + 8 + ebx * 4 + 600]
-        mov eax, dword ptr [g_cell + ebx * 8]
-        sub eax, dword ptr [g_hoverX]
-        cmp eax, ecx
-        jae outline_next
-        mov eax, dword ptr [g_cell + ebx * 8 + 4]
-        sub eax, dword ptr [g_hoverY]
-        cmp eax, ecx
-        jb outline_selected
-    outline_next:
-        inc ebx
-        jmp outline_find
-    outline_selected:
-        // Original highlight frame starts at esp+0x40; pushfd/pushad add 36.
-        fxsave [g_fpu]
         lea eax, [esp + 0x64]
+        lea edx, [esp + 0xb4]
+        push 1
+        push edx
         push eax
-        push ebx
-        call UpdateProjectionRange
-        fxrstor [g_fpu]
-        mov ecx, dword ptr [g_outputStorage + 8 + ebx * 4 + 600]
-        mov eax, dword ptr [g_cell + ebx * 8]
-        mov edx, dword ptr [g_cell + ebx * 8 + 4]
-        // Stock order: x-size, y, x, y-size. pushfd/pushad add 36.
-        mov dword ptr [esp + 0xbc], eax
-        mov dword ptr [esp + 0xb8], edx
-        sub eax, ecx
-        sub edx, ecx
-        mov dword ptr [esp + 0xb4], eax
-        mov dword ptr [esp + 0xc0], edx
-    outline_done:
+        push esi
+        call ApplyProjectionOutline
         popad
         popfd
         mov edx, dword ptr [esi + 0x40]
@@ -4403,6 +4147,34 @@ void RotateProjectionDetails(uint32_t* rotator, bool forward) {
 void __fastcall ProjectionDetailsNext(uint32_t* rotator, void*) { RotateProjectionDetails(rotator, true); }
 void __fastcall ProjectionDetailsPrevious(uint32_t* rotator, void*) { RotateProjectionDetails(rotator, false); }
 
+void ReleaseProjectionDetailsRotator() {
+    auto* rotator=g_detailsRotator;
+    const bool owned=g_detailsRotatorOwned;
+    g_detailsRotator=nullptr;g_detailsRotatorOwned=false;
+    if (owned && rotator) {
+        if (g_detailsNativeMethods && *rotator==reinterpret_cast<uint32_t>(g_detailsNativeMethods)) {
+            *rotator=0xe4046c;
+        }
+        auto* reference=reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(rotator)
+            + reinterpret_cast<const uint32_t*>(rotator[1])[1] + 4);
+        if (--reference[2]==0) reinterpret_cast<void (__thiscall*)(void*)>(0x8c6150)(reference);
+    }
+}
+
+void BindProjectionDetailsRotator(uint32_t* rotator, unsigned slot, bool retain = false) {
+    if (g_detailsRotator!=rotator || g_detailsRotatorOwned!=retain) {
+        ReleaseProjectionDetailsRotator();
+        g_detailsRotator = rotator;
+        if (retain) {
+            auto* reference=reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(rotator)
+                + reinterpret_cast<const uint32_t*>(rotator[1])[1] + 4);
+            ++reference[2];g_detailsRotatorOwned=true;
+        }
+    }
+    g_detailsProjectionSlot = slot;
+    g_detailsRotatorGeneration = g_placementGeneration;
+}
+
 void AttachProjectionDetailsRotator(uint32_t* rotator, unsigned slot) {
     if (*rotator != 0xe4046c) return;
     static uint32_t methods[16]{};
@@ -4414,12 +4186,10 @@ void AttachProjectionDetailsRotator(uint32_t* rotator, unsigned slot) {
     }
     // Keep native lifetime management: its destructor owns only rotator[2].
     *rotator = reinterpret_cast<uint32_t>(methods + 1);
-    g_detailsRotator = rotator;
-    g_detailsProjectionSlot = slot;
-    g_detailsRotatorGeneration = g_placementGeneration;
+    BindProjectionDetailsRotator(rotator,slot);
 }
 
-void ProcessProjectionDetails() {
+void ProcessProjectionDetails(bool installRotatorCallbacks) {
     const int slot = g_detailsSlot;
     g_detailsSlot = -1;
     auto* screen = g_projectionScreen;
@@ -4452,7 +4222,13 @@ void ProcessProjectionDetails() {
         auto* reference = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(rotator)
             + reinterpret_cast<const uint32_t*>(rotator[1])[1] + 4);
         ++reference[2];
-        AttachProjectionDetailsRotator(rotator, static_cast<unsigned>(slot));
+        if (installRotatorCallbacks) { AttachProjectionDetailsRotator(rotator, static_cast<unsigned>(slot)); }
+        else if (*rotator==0xe4046c) {
+            BindProjectionDetailsRotator(rotator, static_cast<unsigned>(slot), true);
+            if (count>1 && g_detailsNativeMethods) {
+                *rotator=reinterpret_cast<uint32_t>(g_detailsNativeMethods);
+            }
+        }
         // Native read-only creature screen with a single synthetic creature.
         // World/player are UI context only; no hero, army or combat stack is supplied.
         using CreateScreen = void* (__fastcall*)(uint32_t, uint32_t, void*, uint32_t, uint32_t,
@@ -4460,7 +4236,7 @@ void ProcessProjectionDetails() {
         void* command = reinterpret_cast<CreateScreen>(0x789600)(screen[0x2a8 / 4], player[3], rotator,
             0, 0, 1, 0, screen[0xf4 / 4], 0, 1, 0, 0);
         if (command != nullptr) reinterpret_cast<void (__thiscall*)(void*)>(0x838c10)(command);
-        else g_detailsRotator = nullptr;
+        else ReleaseProjectionDetailsRotator();
         if (--reference[2] == 0) reinterpret_cast<void (__thiscall*)(void*)>(0x8c6150)(reference);
     }
     if (--creatureReference[2] == 0) reinterpret_cast<void (__thiscall*)(void*)>(0x8c6150)(creatureReference);
@@ -4503,7 +4279,7 @@ void ResetProjectionTooltipChoices() {
     g_tooltipController = nullptr;
     g_projectionScreen = nullptr;
     g_detailsSlot = -1;
-    g_detailsRotator = nullptr;
+    ReleaseProjectionDetailsRotator();
 }
 
 uint32_t ProjectionTooltipDescriptor(uint32_t creatureType);
@@ -4519,14 +4295,18 @@ int UncertainProjectionProvider(uint32_t* provider, uint32_t* variants, unsigned
     return *count > 1 ? slot : -1;
 }
 
-uint32_t __fastcall ProjectionProviderWindow(uint32_t* provider, void*) {
+void PrepareProjectionProviderWindow(uint32_t* provider) {
     uint32_t variants[3]{};
     unsigned count = 0;
     if (UncertainProjectionProvider(provider, variants, &count) >= 0) provider[4] = 1;
+}
+
+uint32_t __fastcall ProjectionProviderWindow(uint32_t* provider, void*) {
+    PrepareProjectionProviderWindow(provider);
     return reinterpret_cast<uint32_t (__thiscall*)(void*)>(0x6b7eb0)(provider);
 }
 
-void __fastcall ProjectionProviderRightClick(uint32_t* provider, void*) {
+void AdvanceProjectionProviderGrade(uint32_t* provider) {
     uint32_t variants[3]{};
     unsigned count = 0;
     const int slot = UncertainProjectionProvider(provider, variants, &count);
@@ -4554,6 +4334,10 @@ void __fastcall ProjectionProviderRightClick(uint32_t* provider, void*) {
             g_tooltipChoice[slot] = previous;
         }
     }
+}
+
+void __fastcall ProjectionProviderRightClick(uint32_t* provider, void*) {
+    AdvanceProjectionProviderGrade(provider);
     reinterpret_cast<void (__thiscall*)(void*)>(0x6b7790)(provider);
 }
 
@@ -4572,6 +4356,16 @@ void __stdcall AttachProjectionTooltipProvider(void* controller) {
     methods[1] = reinterpret_cast<uint32_t>(ProjectionProviderRightClick);
     DWORD ignored{};
     VirtualProtect(methods, 8, protection, &ignored);
+}
+
+// Shared decoration classification; no code pointers are installed here.
+bool __stdcall ProjectionTooltipWindowIsDecoration(const uint32_t* window, const uint32_t* controller) {
+    if (*window==0xe2ff58) { return true; }
+    if (*window!=0xe73c70) { return false; }
+    if (g_detailsHitTest) { controller=g_tooltipController; }
+    if (!controller) { return false; }
+    const auto* provider=reinterpret_cast<const uint32_t*>(controller[0x44/4]);
+    return provider && reinterpret_cast<uintptr_t>(window)==provider[2]-0x130u;
 }
 
 // The deployment title is a CWindowFadedText with a large hit rectangle.
@@ -4601,33 +4395,14 @@ __declspec(naked) void ProjectionTooltipHitTestHook() {
         fxrstor [g_fpu]
         popad
     tooltip_hit_windows:
-        cmp dword ptr [eax], 0xe2ff58
-        je skip_decoration
-        cmp dword ptr [eax], 0xe73c70
-        jne original_hit_test
-        // CCommonGatheringWindow's IWindow is at +0x130. Only the
-        // current controller's own tooltip may pass through itself.
-        push edx
-        cmp byte ptr [g_detailsHitTest], 0
-        je tooltip_hit_controller
-        mov edx, dword ptr [g_tooltipController]
-        test edx, edx
-        je other_window
-        jmp tooltip_hit_provider
-    tooltip_hit_controller:
-        mov edx, dword ptr [esp + 12]
-    tooltip_hit_provider:
-        mov edx, dword ptr [edx + 0x44]
-        test edx, edx
-        je other_window
-        mov edx, dword ptr [edx + 8]
-        sub edx, 0x130
-        cmp eax, edx
-        pop edx
-        jne original_hit_test
-        jmp skip_decoration
-    other_window:
-        pop edx
+        pushad
+        mov ecx, dword ptr [esp + 40]
+        push ecx
+        push eax
+        call ProjectionTooltipWindowIsDecoration
+        test al, al
+        popad
+        jnz skip_decoration
         jmp original_hit_test
     skip_decoration:
         popfd
@@ -4687,6 +4462,7 @@ uint32_t* __fastcall ScreenTooltipHook(void* owner, void*, uint32_t* result, con
     return result;
 }
 
+#ifndef H5_PREVIEW_MANAGED_SDK
 bool InstallRendererHook() {
     if (g_originalRenderer != nullptr) {
         return true;
@@ -4816,8 +4592,10 @@ bool InstallRendererHook() {
     return true;
 }
 
+#endif
 }
 
+#ifndef H5_PREVIEW_MANAGED_SDK
 extern "C" __declspec(dllexport) unsigned long WorkshopDeploymentPreviewVersion() {
     if (g_publicCount == 0 || g_projectionPlanning) {
         return 1;
@@ -4829,11 +4607,7 @@ extern "C" __declspec(dllexport) unsigned long WorkshopDeploymentPreviewVersion(
 }
 
 extern "C" __declspec(dllexport) unsigned long WorkshopDeploymentPreviewInstall() {
-    wchar_t mode[8]{};
-    g_superadminEnabled = GetEnvironmentVariableW(L"H5_PREVIEW_SUPERADMIN", mode, 8) == 1 && mode[0] == L'1';
-    wchar_t spread[8]{};
-    g_useSpreadRows = g_superadminEnabled
-        && GetEnvironmentVariableW(L"H5_PREVIEW_SUPERADMIN_SPREAD", spread, 8) == 1 && spread[0] == L'1';
+    ConfigureResearchMode();
     return InstallRendererHook() ? 1 : 0;
 }
 
@@ -4931,11 +4705,17 @@ extern "C" unsigned long __stdcall WorkshopDeploymentPreviewProjectionTrace(void
 #pragma comment(linker, "/EXPORT:WorkshopDeploymentPreviewSuperadminInputTrace=_WorkshopDeploymentPreviewSuperadminInputTrace@4")
 extern "C" __declspec(dllexport) unsigned long __stdcall WorkshopDeploymentPreviewSuperadminInputTrace(void* destination) {
     if (destination == nullptr) return 0;
+    // Version15 callers allocate the original bounded layout. Expanded journals
+    // are available through the managed versioned trace; never truncate or grow
+    // this legacy caller's buffer implicitly.
+    constexpr uint32_t legacyCapacity = 256;
+    if (g_actorInputCount < 0 || g_actorInputCount > legacyCapacity || g_auxiliaryInputCount > legacyCapacity ||
+        g_heroCorrectionCount > 64) return 0;
     auto* snapshot = static_cast<uint32_t*>(destination);
     constexpr uint32_t rowWords = sizeof(FrozenActorInput) / sizeof(uint32_t);
-    constexpr uint32_t metadata = 8 + kActorInputCapacity * rowWords;
+    constexpr uint32_t metadata = 8 + legacyCapacity * rowWords;
     constexpr uint32_t auxiliary = metadata + 39 + 3 + 64 * 6;
-    constexpr uint32_t strategy = auxiliary + 3 + 256 * 6;
+    constexpr uint32_t strategy = auxiliary + 3 + legacyCapacity * 6;
     constexpr uint32_t strengths = strategy + 10;
     constexpr uint32_t area = strengths + 2 + 256 * 40 + 4 + 24;
     memset(snapshot, 0, (area + 2 + 128 * 316 + 8) * sizeof(uint32_t));
@@ -4946,7 +4726,7 @@ extern "C" __declspec(dllexport) unsigned long __stdcall WorkshopDeploymentPrevi
     const LONG sequence = g_actorInputSequence;
     if (sequence & 1) return 2;
     const uint32_t count = g_actorInputCount;
-    if (count > kActorInputCapacity) return 0;
+    if (count > legacyCapacity) return 0;
     snapshot[2] = g_actorInputGeneration;
     snapshot[3] = count;
     snapshot[4] = g_actorInputOverflow;
@@ -4961,10 +4741,12 @@ extern "C" __declspec(dllexport) unsigned long __stdcall WorkshopDeploymentPrevi
     snapshot[metadata + 40] = g_heroCorrectionOverflow;
     snapshot[metadata + 41] = g_heroCorrectionMask;
     memcpy(snapshot + metadata + 42, g_heroCorrections, g_heroCorrectionCount * sizeof(FrozenHeroCorrection));
-    snapshot[auxiliary] = g_auxiliaryInputCount;
+    const uint32_t auxiliaryCount = g_auxiliaryInputCount;
+    if (auxiliaryCount > legacyCapacity) return 0;
+    snapshot[auxiliary] = auxiliaryCount;
     snapshot[auxiliary + 1] = g_auxiliaryInputOverflow;
     snapshot[auxiliary + 2] = g_auxiliaryMask;
-    memcpy(snapshot + auxiliary + 3, g_auxiliaryInputs, g_auxiliaryInputCount * sizeof(FrozenAuxiliaryPower));
+    memcpy(snapshot + auxiliary + 3, g_auxiliaryInputs, auxiliaryCount * sizeof(FrozenAuxiliaryPower));
     memcpy(snapshot + strategy, g_strategyTrace, sizeof(g_strategyTrace));
     if (g_sourceStrengthCount > 256) return 0;
     snapshot[strengths] = g_sourceStrengthCount;
@@ -4988,3 +4770,4 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
     }
     return TRUE;
 }
+#endif

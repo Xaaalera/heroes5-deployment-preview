@@ -1,5 +1,6 @@
 """Optional x86-emulator check; never starts or attaches to the game."""
 import importlib.util
+import os
 import hashlib
 import json
 from pathlib import Path
@@ -25,7 +26,7 @@ except ImportError:
     keystone = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests'))
-from preview_support import MOD_ROOT, DEVKIT, WORKSPACE, BUILD, vcvarsall
+from preview_support import MOD_ROOT, DEVKIT, WORKSPACE, BUILD, vcvarsall, preview_source
 sys.path.insert(0, str(DEVKIT / 'scripts'))
 SPEC = importlib.util.spec_from_file_location('native_probe', DEVKIT / 'scripts/native-probe.py')
 probe = importlib.util.module_from_spec(SPEC)
@@ -33,8 +34,1379 @@ SPEC.loader.exec_module(probe)
 
 
 
+class ComparisonTests(unittest.TestCase):
+    def test_frozen_deployment_matching_and_observed_differences(self):
+        if not vcvarsall().is_file():
+            self.fail('MSVC is required for the player comparison acceptance check')
+        driver = r'''#include "deployment_comparison.hpp"
+#include <algorithm>
+#include <cassert>
+#include <iostream>
+using namespace h5_preview;
+int main() {
+ ComparisonStack forecast[7]{{3,10,1,1,1},{3,20,1,1,2}};
+ ComparisonStack actual[7]{forecast[1],forecast[0]};
+ auto result=CompareDeployments(forecast,2,actual,2);
+ assert(result.valid && result.exactCount==2 && result.positionMatchCount==2);
+ assert(result.entries[0].actualIndex==1 && result.entries[1].actualIndex==0);
+ // A tempting same-cell match must not steal the correct equal-count stack.
+ actual[0]={3,20,1,1,1};actual[1]={3,10,1,1,3};
+ result=CompareDeployments(forecast,2,actual,2);
+ assert(result.entries[0].actualIndex==1 && result.entries[1].actualIndex==0);
+ assert(result.exactCount==0 && !result.splitChanged && !result.totalsChanged);
+ forecast[0]={3,30,1,1,1};actual[0]={3,10,1,1,1};actual[1]={3,20,1,1,3};
+ result=CompareDeployments(forecast,1,actual,2);
+ assert(result.valid && result.splitChanged && !result.totalsChanged && !result.typesChanged);
+ assert(result.entryCount==2 && result.exactCount==0);
+ forecast[0]={3,31,1,1,1};actual[0]={3,30,1,1,1};
+ result=CompareDeployments(forecast,1,actual,1);
+ assert(result.totalsChanged && !result.splitChanged);
+ assert(result.entries[0].difference==DeploymentDifference::QuantityChanged);
+ forecast[0].quantity=0;
+ result=CompareDeployments(forecast,1,actual,1);
+ assert(result.valid && !result.quantitiesKnown && !result.totalsChanged && !result.splitChanged);
+ assert(result.exactCount==0 && result.positionMatchCount==1);
+ assert(result.entries[0].difference==DeploymentDifference::PositionOnlyKnown);
+ forecast[0]={3,30,2,1,1};
+ result=CompareDeployments(forecast,1,actual,1);
+ assert(result.positionMatchCount==0 && result.entries[0].difference==DeploymentDifference::Moved);
+ actual[0].type=4;
+ result=CompareDeployments(forecast,1,actual,1);
+ assert(result.typesChanged && result.entryCount==2 && result.entries[0].difference==DeploymentDifference::Missing);
+ assert(result.entries[1].difference==DeploymentDifference::Unpredicted);
+ assert(!CompareDeployments(forecast,8,actual,1).valid);
+ assert(!CompareDeployments(forecast,1,actual,0).valid);
+ actual[0].quantity=0;assert(!CompareDeployments(forecast,1,actual,1).valid);
+ actual[0].quantity=1;actual[0].x=-1;assert(!CompareDeployments(forecast,1,actual,1).valid);
+ actual[0].x=1;
+ result=CompareDeployments(nullptr,0,actual,1);
+ assert(result.valid && result.entryCount==1 && !result.quantitiesKnown);
+ std::array<unsigned,7> order{0,1,2,3,4,5,6};
+ for(unsigned index=0;index<7;++index) forecast[index]={3+index%2,10+index%3,1,1,static_cast<int>(index)};
+ unsigned permutations=0;
+ do {
+  for(unsigned index=0;index<7;++index) actual[index]=forecast[order[index]];
+  result=CompareDeployments(forecast,7,actual,7);
+  assert(result.valid && result.exactCount==7 && result.positionMatchCount==7);
+  assert(!result.splitChanged && !result.totalsChanged && !result.typesChanged);
+  ++permutations;
+ } while(std::next_permutation(order.begin(),order.end()));
+ assert(permutations==5040);
+ // Full-reference explanations are admitted only for a complete exact pack.
+ PlacementDecisionTrace trace{};
+ trace.version=1;trace.placementGeneration=17;trace.count=7;trace.complete=1;
+ for(unsigned index=0;index<7;++index) {
+  const auto& stack=forecast[index];
+  trace.records[index]={stack.type,stack.quantity,stack.footprint,index+1,0,0,
+   stack.x,stack.y,0,10,PlacementDecisionRule::RankedRow,0,0};
+ }
+ std::reverse(actual,actual+7);
+ auto reference=CompareReferenceDecisions(trace,actual,7);
+ assert(reference.status==ReferenceDecisionStatus::MatchesFact);
+ for(unsigned index=0;index<7;++index) {
+  const auto& decision=trace.records[reference.decisionForActual[index]];
+  assert(decision.quantity==actual[index].quantity && decision.y==actual[index].y);
+ }
+ ++actual[0].y;
+ reference=CompareReferenceDecisions(trace,actual,7);
+ assert(reference.status==ReferenceDecisionStatus::DisagreesWithFact);
+ for(auto index:reference.decisionForActual) assert(index==-1);
+ --actual[0].y;
+ assert(CompareReferenceDecisions(trace,actual,6).status==ReferenceDecisionStatus::DisagreesWithFact);
+ trace.complete=0;
+ assert(CompareReferenceDecisions(trace,actual,7).status==ReferenceDecisionStatus::Unavailable);
+ trace.complete=1;trace.records[0].order=2;
+ assert(CompareReferenceDecisions(trace,actual,7).status==ReferenceDecisionStatus::Unavailable);
+ trace.records[0].order=1;trace.records[0].rule=static_cast<PlacementDecisionRule>(7);
+ assert(CompareReferenceDecisions(trace,actual,7).status==ReferenceDecisionStatus::Unavailable);
+ trace.records[0].rule=PlacementDecisionRule::RankedRow;trace.records[0].phase=8;
+ assert(CompareReferenceDecisions(trace,actual,7).status==ReferenceDecisionStatus::Unavailable);
+ trace.records[0].phase=0;
+ trace.records[0].rule=PlacementDecisionRule::RankedRow;trace.records[0].quantity=0;
+ assert(CompareReferenceDecisions(trace,actual,7).status==ReferenceDecisionStatus::Unavailable);
+ assert(CompareReferenceDecisions(trace,nullptr,7).status==ReferenceDecisionStatus::Unavailable);
+ std::cout << "PASS: duplicates, unknown quantities, split/totals/types, malformed input, 5040 permutations\n";
+}
+'''
+        with tempfile.TemporaryDirectory(prefix='h5-comparison-') as directory:
+            temporary = Path(directory)
+            (temporary / 'comparison.cpp').write_text(driver, encoding='utf-8')
+            (temporary / 'build.cmd').write_text(
+                f'@call "{vcvarsall()}" x86 >nul\n@if errorlevel 1 exit /b 1\n'
+                f'@cl /nologo /EHsc /O2 /std:c++20 /I"{MOD_ROOT / "src"}" /Fe:comparison.exe comparison.cpp\n',
+                encoding='utf-8')
+            build = subprocess.run(['cmd', '/d', '/c', str(temporary / 'build.cmd')], cwd=temporary, capture_output=True)
+            self.assertEqual(build.returncode, 0, build.stdout.decode(errors='replace') + build.stderr.decode(errors='replace'))
+            result = subprocess.run([str(temporary / 'comparison.exe')], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout.decode(errors='replace') + result.stderr.decode(errors='replace'))
+
+
 @unittest.skipIf(Uc is None, 'Unicorn is required for emulation checks')
 class NativeTests(unittest.TestCase):
+    def test_strategy_verifier_matches_army_and_lifetime_instead_of_policy_label(self):
+        import copy
+        specification = importlib.util.spec_from_file_location('policy_verifier', MOD_ROOT / 'scripts/check.py')
+        verifier = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(verifier)
+        report = {'generation': 7, 'strategy_generation': 7, 'failures': 0, 'overflow': 0,
+                  'strategy_mask': 3, 'army_identities': [100, 200], 'strategies': [0, 1],
+                  'events': [
+                      {'kind': 'capability_input', 'army_identity': 100},
+                      {'kind': 'capability_result', 'evaluation_identity': 10},
+                      {'kind': 'decision', 'evaluation_identity': 10, 'defensive': 0},
+                      {'kind': 'capability_input', 'army_identity': 200},
+                      {'kind': 'capability_result', 'evaluation_identity': 20},
+                      {'kind': 'decision', 'evaluation_identity': 20, 'defensive': 1}],
+                  'policies': [{'side': 1, 'evaluation_identity': 10, 'events_seen': 3, 'defensive': 0}]}
+        accepted = verifier.verify_policy_decisions(report)
+        self.assertTrue(accepted['ok'])
+        self.assertEqual(accepted['policies'][0]['army_index'], 0)
+        self.assertEqual(accepted['policies'][0]['policy_label'], 1)
+        self.assertFalse(accepted['goal_complete'])
+        reused = copy.deepcopy(report)
+        reused['events'] += [
+            {'kind': 'capability_input', 'army_identity': 200},
+            {'kind': 'capability_result', 'evaluation_identity': 10},
+            {'kind': 'decision', 'evaluation_identity': 10, 'defensive': 1}]
+        self.assertTrue(verifier.verify_policy_decisions(reused)['ok'], 'Future reuse cannot change the prior observation')
+        mismatch = copy.deepcopy(report)
+        mismatch['strategies'][0] = 1
+        self.assertFalse(verifier.verify_policy_decisions(mismatch)['ok'])
+        for mutation in ('stale', 'overflow', 'unknown_army', 'wrong_context', 'reversed_call', 'future_policy', 'missing_decision'):
+            broken = copy.deepcopy(report)
+            if mutation == 'stale': broken['strategy_generation'] = 6
+            elif mutation == 'overflow': broken['overflow'] = 1
+            elif mutation == 'unknown_army': broken['events'][0]['army_identity'] = 300
+            elif mutation == 'wrong_context': broken['events'][1]['evaluation_identity'] = 30
+            elif mutation == 'reversed_call': broken['events'][:2] = reversed(broken['events'][:2])
+            elif mutation == 'future_policy': broken['policies'][0]['events_seen'] = 2
+            else: broken['events'] = []
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                verifier.verify_policy_decisions(broken)
+
+    def test_renderer_adapter_preserves_native_arguments_and_caller_guard(self):
+        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text(encoding='utf-8')
+        hook = '__declspec(naked) void RendererHook() {' + source.split(
+            '__declspec(naked) void RendererHook() {', 1)[1].split(
+            '__declspec(naked) void __stdcall UpdatePlacementHover(', 1)[0]
+        # Replace only the final native continuation; exercise the production argument adapter.
+        hook = hook.replace('        push ebp\n        mov ebp, esp\n        and esp, 0xfffffff8\n'
+                            '        mov eax, 0x577016\n        jmp eax', '        ret 36')
+        wrapper = 'void __stdcall RenderPlacementPreview(' + source.split(
+            'void __stdcall RenderPlacementPreview(', 1)[1].split(
+            'bool PlanReferencePlacement(', 1)[0]
+        driver = r'''#include <cstdint>
+#include <cassert>
+uint32_t received[5]{};
+void __stdcall RenderPlacementPreview(uint32_t owner, uint32_t caller, uint32_t root,
+    uint32_t factory, uint32_t angle) { received[0]=owner;received[1]=caller;received[2]=root;received[3]=factory;received[4]=angle; }
+HOOK
+namespace guarded {
+namespace h5 { namespace hooks { constexpr uint32_t PlacementRendererCaller = 0x57788f; } }
+void* g_placementOwner=reinterpret_cast<void*>(0x1234);
+uint32_t g_rendererRootArgument=0,g_rendererFactoryArgument=0,renderedOwner=0;
+bool g_superadminEnabled=false,g_neutralTypesUnknown=false;
+int g_plannedProjectionCount=3,g_renderedGeneration=-1,g_placementGeneration=4;
+unsigned char g_outputStorage[1024]{};
+void __stdcall RenderPlacementModels(uint32_t owner, uint32_t root, uint32_t factory, uint32_t angle) {
+ renderedOwner=owner;g_rendererRootArgument=root;g_rendererFactoryArgument=factory;
+ *reinterpret_cast<uint32_t*>(g_outputStorage+8+760)=angle+180u;
+}
+WRAPPER
+}
+int main() {
+ uint32_t expectedCaller=0;
+ __asm {
+  lea eax, continuation
+  mov expectedCaller,eax
+  push edi
+  mov edi,0x1234
+  push 0x900
+  push 0x800
+  push 0x700
+  push 0x600
+  push 0x500
+  push 0x400
+  push 0x300
+  push 0x200
+  push 0x100
+  call RendererHook
+ continuation:
+  pop edi
+ }
+ assert(received[0]==0x1234 && received[1]==expectedCaller);
+ assert(received[2]==0x500 && received[3]==0x900 && received[4]==0x700);
+ guarded::RenderPlacementPreview(0x9999,0x57788f,1,2,3);
+ assert(!guarded::renderedOwner && !guarded::g_rendererRootArgument);
+ guarded::RenderPlacementPreview(0x1234,0x111111,1,2,3);
+ assert(!guarded::renderedOwner && !guarded::g_rendererRootArgument);
+ guarded::RenderPlacementPreview(0x1234,0x57788f,1,2,30);
+ assert(guarded::renderedOwner==0x1234 && guarded::g_rendererRootArgument==1 && guarded::g_rendererFactoryArgument==2);
+ assert(*reinterpret_cast<uint32_t*>(guarded::g_outputStorage+8+760)==210);
+ guarded::renderedOwner=0;guarded::g_neutralTypesUnknown=true;
+ guarded::RenderPlacementPreview(0x1234,0x57788f,1,2,30);
+ assert(!guarded::renderedOwner && !guarded::g_plannedProjectionCount);
+ assert(guarded::g_renderedGeneration==guarded::g_placementGeneration);
+ guarded::g_superadminEnabled=true;
+ guarded::RenderPlacementPreview(0x1234,0x57788f,1,2,30);
+ assert(guarded::renderedOwner==0x1234);
+ return 0;
+}
+'''.replace('HOOK', hook).replace('WRAPPER', wrapper)
+        with tempfile.TemporaryDirectory(prefix='xkit-renderer-adapter-') as directory:
+            temporary = Path(directory)
+            (temporary / 'adapter.cpp').write_text(driver, encoding='utf-8')
+            admission = r'''#define H5_PREVIEW_MANAGED_SDK 1
+#include "REFERENCE_SOURCE"
+#include <cassert>
+int main() {
+ g_placementOwner=reinterpret_cast<void*>(0x1234);
+ g_placementGeneration=g_renderedGeneration=17;
+ g_rendererRootArgument=11;g_rendererFactoryArgument=22;
+ *reinterpret_cast<uint32_t*>(g_outputStorage+8+760)=33;
+ const LONG renders=g_renderCalls;
+ RenderPlacementPreview(0x1234,h5::hooks::PlacementRendererCaller,111,222,333);
+ assert(g_rendererRootArgument==11 && g_rendererFactoryArgument==22);
+ assert(*reinterpret_cast<uint32_t*>(g_outputStorage+8+760)==33);
+ assert(g_renderCalls==renders);
+ *reinterpret_cast<uint32_t*>(g_outputStorage+8+496)=1;
+ *reinterpret_cast<uint32_t*>(g_outputStorage+8+600)=2;
+ *reinterpret_cast<uint32_t*>(g_outputStorage+8+640)=13;
+ g_cell[0]=5;g_cell[1]=5;
+ const int cell[2]{4,4};UpdatePlacementHover(77,cell);
+ assert(g_hoverX==4 && g_hoverY==4 && HoveredProjectionSlot()==0);
+ assert(*reinterpret_cast<uint32_t*>(g_outputStorage+8+508)==77);
+ const int away[2]{0,0};UpdatePlacementHover(88,away);
+ assert(HoveredProjectionSlot()==-1);
+ int bounds[4]{11,22,33,44};uint32_t highlight[3]{};
+ ApplyProjectionOutline(0x9999,highlight,bounds,false);
+ assert(bounds[0]==11 && bounds[3]==44);
+ return 0;
+}
+'''.replace('REFERENCE_SOURCE', (MOD_ROOT / 'src/preview_plugin.cpp').as_posix())
+            (temporary / 'admission.cpp').write_text(admission, encoding='utf-8')
+            (temporary / 'build.cmd').write_text(
+                f'@call "{vcvarsall()}" x86 >nul\n@if errorlevel 1 exit /b 1\n'
+                f'@cl /nologo /EHsc /O2 /std:c++20 /c /Fo:preview.obj "{MOD_ROOT / "src/preview_plugin.cpp"}"\n'
+                '@if errorlevel 1 exit /b 1\n@cl /nologo /EHsc /O2 /std:c++20 /Fe:adapter.exe adapter.cpp\n'
+                '@if errorlevel 1 exit /b 1\n@cl /nologo /EHsc /O2 /std:c++20 /Fe:admission.exe admission.cpp user32.lib\n', encoding='utf-8')
+            build = subprocess.run(['cmd', '/d', '/c', str(temporary / 'build.cmd')], cwd=temporary, capture_output=True)
+            self.assertEqual(build.returncode, 0, build.stdout.decode(errors='replace') + build.stderr.decode(errors='replace'))
+            result = subprocess.run([str(temporary / 'adapter.exe')], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+            result = subprocess.run([str(temporary / 'admission.exe')], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+
+    def test_managed_source_capture_keeps_unique_rows_and_freezes_at_start(self):
+        """Execute the managed implementation: capacity, phases, reset and privacy."""
+        if not vcvarsall().is_file():
+            self.fail('MSVC x86 is required for the managed capture acceptance')
+        source = (MOD_ROOT / 'src/preview_sdk.cpp').as_posix()
+        driver = r'''
+#include <cassert>
+#include <cstring>
+#include "MANAGED_SOURCE"
+#include <cstdio>
+#include <xmmintrin.h>
+#undef assert
+#define assert(condition) do { if (!(condition)) { fprintf(stderr, "Failed line %d: %s\n", __LINE__, #condition); return 1; } } while (false)
+unsigned releasedModels=0,releasedCaches=0,releasedGlows=0;
+void __fastcall ReleaseModelBoundary(uint32_t* holder,void*) { ++releasedModels;holder[0]=0; }
+void __fastcall ReleaseCacheBoundary(uint32_t*,void*) { ++releasedCaches; }
+void __fastcall ReleaseGlowBoundary(uint32_t*,void*,uint32_t) { ++releasedGlows; }
+uint32_t fixtureDefinition[70]{};bool useFixtureDefinition=false;
+const uint32_t* __fastcall PublicDefinitionBoundary(uint32_t) { return useFixtureDefinition ? fixtureDefinition : nullptr; }
+unsigned char fixtureVisual[0xe8]{};bool useFixtureVisual=false;
+uintptr_t fixtureLocalizedText[3]{};
+bool fixtureTextThrows=false;
+void* __fastcall CreatureVisualBoundary(void* reference) {
+    return useFixtureVisual && reference==reinterpret_cast<unsigned char*>(fixtureDefinition)+0xf4 ? fixtureVisual : nullptr;
+}
+const uintptr_t* __fastcall CreatureTextBoundary(void* reference,void*) {
+    _mm_setcsr(_mm_getcsr() ^ 0x6000);
+    __asm { fldpi }
+    if (fixtureTextThrows) { RaiseException(0xe0001236,0,0,nullptr); }
+    return reference==fixtureVisual+0x44 ? fixtureLocalizedText : nullptr;
+}
+uint32_t* __fastcall EmptyTooltipBoundary(uint32_t* output,void*) { memset(output,0,16);return output; }
+bool __fastcall ActiveScreenBoundary(void*) { return true; }
+int scoutedMastery=0;
+int __fastcall ScoutingMasteryBoundary(const void*,void*,int skill) { return skill==20 ? scoutedMastery : 0; }
+uint32_t wornArtifactSet=0;bool fixtureCrownWorn=false;
+const void* __fastcall WornArtifactSetBoundary(const void*,void*) { return &wornArtifactSet; }
+bool __fastcall WornArtifactContainsBoundary(const void* set,void*,int artifact) {
+    return set==&wornArtifactSet && artifact==12 && fixtureCrownWorn;
+}
+bool failReferenceRenderer=false;
+void __stdcall ReferenceRendererBoundary(uint32_t,uint32_t,uint32_t,uint32_t) {
+    if(!g_superadminEnabled || !g_referenceCalculationActive ||
+        *reinterpret_cast<uint32_t*>(g_outputStorage+8+1364)!=1) { RaiseException(0xe0001235,0,0,nullptr); }
+    g_publicCount=7;g_publicTypes[0]=999;g_publicBands[0]=99;
+    g_cell[0]=31;g_position[0]=30;g_knownHeroAttack=999;
+    g_root=reinterpret_cast<void*>(0x9999);g_grid=reinterpret_cast<void*>(0x8888);
+    memset(g_outputStorage,0x5a,sizeof(g_outputStorage));
+    auto& trace=*reinterpret_cast<h5_preview::PlacementDecisionTrace*>(g_outputStorage+8+976);
+    trace={};trace.version=1;trace.placementGeneration=g_placementGeneration;trace.count=1;trace.complete=1;
+    if(failReferenceRenderer) RaiseException(0xe0001234,0,0,nullptr);
+}
+int main() {
+    // A payload replacement must preserve the precise calculation's inputs,
+    // without treating capture admission as the forecast mode.
+    assert(SetEnvironmentVariableW(L"H5_PREVIEW_SUPERADMIN",nullptr));
+    assert(SetEnvironmentVariableW(L"H5_PREVIEW_SUPERADMIN_SPREAD",nullptr));
+    assert(SetEnvironmentVariableW(L"H5_PREVIEW_NEUTRAL_TYPES",nullptr));
+    ConfigureResearchMode(); assert(!g_neutralTypesUnknown);
+    assert(SetNeutralTypeKnowledge(false));
+    assert(!g_neutralTypesUnknown); // Changes apply to the next attack.
+    ConfigureResearchMode(); assert(g_neutralTypesUnknown);
+    assert(SetNeutralTypeKnowledge(true)); assert(g_neutralTypesUnknown);
+    ConfigureResearchMode(); assert(!g_neutralTypesUnknown);
+    assert(ParseDisclosedQuantity(L"40",2)==40);
+    assert(ParseDisclosedQuantity(L"2147483647",10)==2147483647u);
+    assert(!ParseDisclosedQuantity(L"2147483648",10));
+    assert(!ParseDisclosedQuantity(L"1-4",3));
+    assert(!ParseDisclosedQuantity(L"40?",3));
+    assert(!ParseDisclosedQuantity(L"0",1));
+    assert(!ParseDisclosedQuantity(nullptr,2));
+    wchar_t publicRange[32]{};
+    const wchar_t rangeLabel[]=L"word <color=#ed760e>(20-49)";
+    assert(!CopyPublicQuantityLabel(rangeLabel,_countof(rangeLabel)-1,publicRange));
+    assert(!wcscmp(publicRange,L"20-49"));
+    assert(CopyPublicQuantityLabel(L"40",2,publicRange)==40 && !wcscmp(publicRange,L"40"));
+    assert(!CopyPublicQuantityLabel(L"(49-20)",7,publicRange) && !publicRange[0]);
+    assert(!CopyPublicQuantityLabel(L"<color=#123456>",15,publicRange) && !publicRange[0]);
+    const wchar_t mergedRange[]=L"word (1-9)";
+    assert(!CopyPublicQuantityLabel(mergedRange,_countof(mergedRange)-1,g_publicQuantityLabels[0]));
+    g_publicBands[0]=1;
+    assert(PublicQuantityEstimate(0,false)==5 && PublicQuantityEstimate(0,true)==1);
+    assert(!g_publicKnownCounts[0]);
+    const wchar_t upperRange[]=L"word (1000+)";
+    assert(!CopyPublicQuantityLabel(upperRange,_countof(upperRange)-1,g_publicQuantityLabels[0]));
+    assert(!wcscmp(g_publicQuantityLabels[0],L"1000+"));
+    assert(PublicQuantityEstimate(0,false)==1000 && PublicQuantityEstimate(0,true)==1000);
+    const wchar_t maximumRange[]=L"(2147483646-2147483647)";
+    CopyPublicQuantityLabel(maximumRange,_countof(maximumRange)-1,g_publicQuantityLabels[0]);
+    assert(PublicQuantityEstimate(0,false)==2147483647u);
+    g_publicKnownCounts[0]=8;
+    assert(PublicQuantityEstimate(0,false)==8 && PublicQuantityEstimate(0,true)==8);
+    g_publicKnownCounts[0]=0;g_publicBands[0]=0;
+    memset(g_publicQuantityLabels,0,sizeof(g_publicQuantityLabels));
+    assert(!PublicQuantityEstimate(0,false) && !PublicQuantityEstimate(7,false));
+    uint32_t publicModel[24]{};wchar_t exactPublicLabel[]=L"40";
+    publicModel[0x24/4]=reinterpret_cast<uint32_t>(exactPublicLabel);
+    publicModel[0x28/4]=reinterpret_cast<uint32_t>(exactPublicLabel+2);
+    CapturePublicBands(publicModel);
+    assert(g_publicKnownCounts[0]==40 && !g_publicKnownCounts[1] && !g_publicBands[0]);
+    uint32_t publicRows[12]{};wchar_t secondPublicLabel[]=L"21";
+    publicModel[0x50/4]=reinterpret_cast<uint32_t>(publicRows);
+    publicModel[0x54/4]=reinterpret_cast<uint32_t>(publicRows+12);
+    publicRows[3]=reinterpret_cast<uint32_t>(exactPublicLabel);
+    publicRows[4]=reinterpret_cast<uint32_t>(exactPublicLabel+2);
+    publicRows[9]=reinterpret_cast<uint32_t>(secondPublicLabel);
+    publicRows[10]=reinterpret_cast<uint32_t>(secondPublicLabel+2);
+    CapturePublicBands(publicModel);
+    assert(g_publicKnownCounts[0]==40 && g_publicKnownCounts[1]==21 && !g_publicKnownCounts[2]);
+    // Sorted records are not emitted slots: shooters can precede a large stack.
+    wchar_t emittedLabels[7][32]{};
+    g_publicCount=3;
+    auto* sourceToSorted=reinterpret_cast<uint32_t*>(g_outputStorage+8+924);
+    auto* emittedToSorted=reinterpret_cast<uint32_t*>(g_outputStorage+8+1368);
+    *reinterpret_cast<uint32_t*>(g_outputStorage+8+496)=3;
+    for(unsigned index=0;index<3;++index) sourceToSorted[index]=index;
+    emittedToSorted[0]=1;emittedToSorted[1]=2;emittedToSorted[2]=0;
+    wcscpy_s(g_publicQuantityLabels[0],L"5-9");
+    wcscpy_s(g_publicQuantityLabels[1],L"20-49");
+    wcscpy_s(g_publicQuantityLabels[2],L"1000+");
+    CopyRenderedQuantityLabels(emittedLabels);
+    assert(!wcscmp(emittedLabels[0],L"20-49") && !wcscmp(emittedLabels[1],L"1000+") && !wcscmp(emittedLabels[2],L"5-9"));
+    // Equal creature types retain distinct original record identities.
+    g_publicCount=2;g_publicTypes[0]=g_publicTypes[1]=3;
+    *reinterpret_cast<uint32_t*>(g_outputStorage+8+496)=2;
+    sourceToSorted[0]=1;sourceToSorted[1]=0;
+    emittedToSorted[0]=1;emittedToSorted[1]=0;
+    CopyRenderedQuantityLabels(emittedLabels);
+    assert(!wcscmp(emittedLabels[0],L"5-9") && !wcscmp(emittedLabels[1],L"20-49") && !emittedLabels[2][0]);
+    emittedToSorted[0]=7;CopyRenderedQuantityLabels(emittedLabels);
+    assert(!emittedLabels[0][0] && !wcscmp(emittedLabels[1],L"20-49"));
+    g_neutralTypesUnknown=true;CopyRenderedQuantityLabels(emittedLabels);
+    assert(!emittedLabels[0][0] && !emittedLabels[1][0]);
+    g_neutralTypesUnknown=false;g_publicCount=0;memset(g_outputStorage,0,sizeof(g_outputStorage));
+    PublicPlannerState{}.Load();
+    assert(!g_publicKnownCounts[0] && !g_publicKnownCounts[1]);
+    static PreciseResearchState research{};
+    g_superadminEnabled=true;g_attackGeneration=17;
+    ResetSuperadminInputCapture();
+    g_actorInputCount=256;g_actorInputs[255].type=57;g_actorInputs[255].quantity=80;
+    g_superadminSourceCount=7;g_superadminSourceTypes[6]=65;g_superadminSourceCounts[6]=12;
+    g_sourceStrengthCount=256;g_sourceStrengthInputs[255].ownWords[1]=123;
+    g_sourceSplitSeed[1]=456;g_sourceComposition[23]=789;
+    g_heroCorrectionCount=64;g_heroCorrections[63].firstScalar=19;
+    g_auxiliaryInputCount=256;g_auxiliaryInputs[255].value=31;
+    g_areaInputCount=128;g_areaInputs[127].spellWords[287]=43;
+    g_strategyTrace[9]=59;g_protectiveCellCount=120;g_protectiveCells[119]=61;
+    research.Save();
+    assert(research.sequence==2);
+    g_superadminEnabled=false;ResetSuperadminInputCapture();
+    memset(g_actorInputs,0,sizeof(g_actorInputs));
+    memset(g_superadminSourceCounts,0,sizeof(g_superadminSourceCounts));
+    memset(g_areaInputs,0,sizeof(g_areaInputs));
+    g_actorInputBusy=g_sourceStrengthBusy=g_areaInputBusy=true;
+    assert(research.Load());
+    assert(g_superadminEnabled && g_actorInputGeneration==17 && g_actorInputCount==256);
+    assert(g_actorInputs[255].type==57 && g_actorInputs[255].quantity==80);
+    assert(g_superadminSourceCount==7 && g_superadminSourceTypes[6]==65 && g_superadminSourceCounts[6]==12);
+    assert(g_sourceStrengthCount==256 && g_sourceStrengthInputs[255].ownWords[1]==123);
+    assert(g_sourceSplitSeed[1]==456 && g_sourceComposition[23]==789);
+    assert(g_heroCorrectionCount==64 && g_heroCorrections[63].firstScalar==19);
+    assert(g_auxiliaryInputCount==256 && g_auxiliaryInputs[255].value==31);
+    assert(g_areaInputCount==128 && g_areaInputs[127].spellWords[287]==43);
+    assert(g_strategyTrace[9]==59 && g_protectiveCellCount==120 && g_protectiveCells[119]==61);
+    assert(!g_actorInputBusy && !g_sourceStrengthBusy && !g_areaInputBusy);
+    research.version=4;g_superadminEnabled=false;
+    assert(!research.Load() && !g_superadminEnabled);
+    research.version=3;research.actorInputCount=h5_preview::PlacementActorInputCapacity+1;
+    assert(!research.Load() && !g_superadminEnabled);
+    research.actorInputCount=256;research.areaInputCount=129;
+    assert(!research.Load() && !g_superadminEnabled);
+    research.areaInputCount=128;research.enabled=false;
+    assert(research.Load() && !g_superadminEnabled);
+    ResetSuperadminInputCapture();
+    struct Guarded { uint64_t before; PreviewInputCapture capture; uint64_t after; } guarded{};
+    guarded.before = 0x1122334455667788; guarded.after = 0x8877665544332211;
+    auto& capture = guarded.capture;
+    h5::army::SourceStrengthSample sample{};
+    sample.type = 13; sample.input.quantity = 10; sample.calculated = 1234;
+    capture.Begin();
+    capture.Append(1, 2, sample); capture.Append(1, 2, sample);
+    assert(capture.count == 1 && capture.observations == 2 && !capture.overflow);
+    assert(capture.sequence == 6);
+    sample.phase = 1; capture.Append(1, 2, sample);
+    capture.Append(3, 2, sample); capture.Append(3, 4, sample);
+    assert(capture.count == 4);
+    sample.input.quantity = 11; capture.Append(3, 4, sample);
+    assert(capture.count == 5 && capture.records[0].sample.input.quantity == 10);
+    capture.frozen = 1; capture.Append(5, 6, sample); assert(capture.count == 5);
+    capture.Begin(); assert(capture.count == 0 && capture.generation == 2 && !capture.frozen);
+    for (uint32_t index = 0; index < 256; ++index) { capture.Append(index, 2, sample); }
+    assert(capture.count == 256 && !capture.overflow);
+    capture.Append(255, 2, sample); assert(!capture.overflow);
+    capture.Append(256, 2, sample); assert(capture.count == 256 && capture.overflow);
+    assert((capture.sequence & 1) == 0);
+    assert(guarded.before == 0x1122334455667788 && guarded.after == 0x8877665544332211);
+    capture.Begin(); assert(!capture.overflow && capture.count == 0);
+
+    auto* resident = static_cast<unsigned char*>(VirtualAlloc(nullptr,
+        heroes5_sdk::ContextCapacity, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    assert(resident);
+    auto& projectionState = *reinterpret_cast<PublicProjectionState*>(resident + PublicProjectionOffset);
+    projectionState.Save();
+    assert(projectionState.research.version==0); // Ordinary mode keeps hidden inputs absent.
+    g_superadminEnabled=true;g_actorInputCount=1;g_actorInputs[0].quantity=37;
+    projectionState.Save();
+    assert(projectionState.research.version==3 && projectionState.research.enabled);
+    g_superadminEnabled=false;g_actorInputCount=0;g_actorInputs[0].quantity=0;
+    projectionState.Load();
+    assert(g_superadminEnabled && g_actorInputCount==1 && g_actorInputs[0].quantity==37);
+    g_superadminEnabled=false;projectionState.Save();
+    g_superadminEnabled=true;projectionState.Load();
+    assert(!g_superadminEnabled && !projectionState.research.enabled);
+    assert(g_actorInputCount==0 && g_superadminSourceCount==0 && !g_sourceSimpleLayout);
+    assert(projectionState.research.actorInputCount==1 && projectionState.research.actorInputs[0].quantity==37);
+    // Borrowing full inputs must restore every public output on success/failure.
+    static PreciseResearchState referenceInputs{};
+    referenceInputs.version=3;referenceInputs.actorInputGeneration=g_attackGeneration;
+    referenceInputs.superadminSourceCount=1;referenceInputs.superadminSourceGeneration=g_placementGeneration;
+    referenceInputs.superadminSourceTypes[0]=57;referenceInputs.superadminSourceCounts[0]=80;
+    referenceInputs.superadminSourceKind=1;
+    uint32_t scoutingOwner[40]{},scoutingHolder[5]{},scoutingHero[2]{},scoutingMethods[100]{};
+    scoutingOwner[0x98/4]=reinterpret_cast<uint32_t>(scoutingHolder);
+    scoutingHolder[0x10/4]=reinterpret_cast<uint32_t>(scoutingHero);
+    scoutingHero[0]=reinterpret_cast<uint32_t>(scoutingMethods);
+    scoutingMethods[0x174/4]=reinterpret_cast<uint32_t>(&ScoutingMasteryBoundary);
+    g_publicCount=1;g_publicTypes[0]=3;g_publicKnownCounts[0]=0;
+    assert(!ApplyScoutedSource(referenceInputs,scoutingOwner));
+    assert(g_publicTypes[0]==3 && !g_publicKnownCounts[0]);
+    scoutedMastery=1;assert(ApplyScoutedSource(referenceInputs,scoutingOwner));
+    assert(g_publicTypes[0]==57 && g_publicKnownCounts[0]==80 && !wcscmp(g_publicQuantityLabels[0],L"80"));
+    g_neutralTypesUnknown=true;g_publicTypes[0]=3;g_publicKnownCounts[0]=0;
+    assert(!ApplyScoutedSource(referenceInputs,scoutingOwner));
+    assert(g_publicTypes[0]==3 && !g_publicKnownCounts[0]);
+    g_neutralTypesUnknown=false;
+    assert(!g_superadminEnabled && g_actorInputCount==0);
+    scoutedMastery=0;scoutingMethods[0x74/4]=reinterpret_cast<uint32_t>(&WornArtifactSetBoundary);
+    void* containsPage=VirtualAlloc(reinterpret_cast<void*>(0x4b0000),65536,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE);
+    assert(containsPage==reinterpret_cast<void*>(0x4b0000));
+    auto* containsBoundary=reinterpret_cast<unsigned char*>(0x4ba880);
+    containsBoundary[0]=0xe9;
+    *reinterpret_cast<int32_t*>(containsBoundary+1)=reinterpret_cast<unsigned char*>(&WornArtifactContainsBoundary)-containsBoundary-5;
+    FlushInstructionCache(GetCurrentProcess(),containsBoundary,5);
+    g_publicKnownCounts[0]=0;g_publicTypes[0]=3;
+    assert(!ApplyScoutedSource(referenceInputs,scoutingOwner) && !g_publicKnownCounts[0]);
+    fixtureCrownWorn=true;assert(ApplyScoutedSource(referenceInputs,scoutingOwner));
+    assert(g_publicKnownCounts[0]==80 && g_publicTypes[0]==57);
+    assert(VirtualFree(containsPage,0,MEM_RELEASE));
+    scoutedMastery=1;
+    referenceInputs.superadminSourceKind=2;assert(!ApplyScoutedSource(referenceInputs,scoutingOwner));
+    referenceInputs.superadminSourceKind=1;referenceInputs.superadminSourceGeneration++;
+    assert(!ApplyScoutedSource(referenceInputs,scoutingOwner));
+    referenceInputs.superadminSourceGeneration--;
+    g_placementOwner=reinterpret_cast<void*>(0x1234);g_publicCount=1;
+    g_publicTypes[0]=3;g_publicBands[0]=5;g_cell[0]=13;g_position[0]=12;
+    g_knownHeroAttack=0;g_root=reinterpret_cast<void*>(0x1111);g_grid=reinterpret_cast<void*>(0x2222);
+    memset(g_outputStorage,0,sizeof(g_outputStorage));g_outputStorage[800]=0x77;
+    unsigned char savedRenderer[5];auto* renderer=reinterpret_cast<unsigned char*>(&RenderPlacementModels);
+    memcpy(savedRenderer,renderer,5);DWORD oldProtection=0;
+    assert(VirtualProtect(renderer,5,PAGE_EXECUTE_READWRITE,&oldProtection));
+    renderer[0]=0xe9;*reinterpret_cast<int32_t*>(renderer+1)=reinterpret_cast<unsigned char*>(&ReferenceRendererBoundary)-renderer-5;
+    FlushInstructionCache(GetCurrentProcess(),renderer,5);
+    g_neutralTypesUnknown=true;
+    // Ordinary rendering must not enter the full-only boundary below.
+    RenderPlacementPreview(0x1234,h5::hooks::PlacementRendererCaller,1,2,3);
+    assert(g_outputStorage[800]==0x77 && g_publicTypes[0]==3);
+    assert(g_renderedGeneration==g_placementGeneration && !g_plannedProjectionCount);
+    for(unsigned failure=0;failure<2;++failure) {
+        failReferenceRenderer=failure!=0;h5_preview::PlacementDecisionTrace decisions{};
+        assert(PlanReferencePlacement(referenceInputs,0x1234,1,2,3,decisions)==!failReferenceRenderer);
+        assert(!g_superadminEnabled && !g_referenceCalculationActive && g_actorInputCount==0);
+        assert(g_publicCount==1 && g_publicTypes[0]==3 && g_publicBands[0]==5);
+        assert(g_cell[0]==13 && g_position[0]==12 && g_knownHeroAttack==0);
+        assert(g_root==reinterpret_cast<void*>(0x1111) && g_grid==reinterpret_cast<void*>(0x2222));
+        assert(g_outputStorage[800]==0x77 && !*reinterpret_cast<uint32_t*>(g_outputStorage+8+1364));
+        assert(decisions.complete==(failReferenceRenderer ? 0u : 1u));
+        assert(g_neutralTypesUnknown); // Full reference preserves public policy.
+    }
+    g_neutralTypesUnknown=false;
+    memcpy(renderer,savedRenderer,5);FlushInstructionCache(GetCurrentProcess(),renderer,5);
+    DWORD ignoredProtection=0;assert(VirtualProtect(renderer,5,oldProtection,&ignoredProtection));
+    g_placementOwner=nullptr;
+    memset(&projectionState,0,sizeof(projectionState));ResetSuperadminInputCapture();
+    projectionState.version = 1;projectionState.publicCount = 2;
+    projectionState.publicTypes[0] = 13;projectionState.publicTypes[1] = 27;
+    projectionState.models[2048] = 0x5a;projectionState.cells[0] = 12;
+    projectionState.Load();
+    assert(g_publicCount == 2 && g_publicTypes[1] == 27 && g_outputStorage[2048] == 0x5a && g_cell[0] == 12);
+    *reinterpret_cast<uint32_t*>(g_outputStorage + 8 + 736) = reinterpret_cast<uint32_t>(g_cell);
+    projectionState.Save();
+    assert(*reinterpret_cast<uint32_t*>(projectionState.models + 8 + 736) == 0);
+    memset(g_outputStorage,0,sizeof(g_outputStorage));g_publicCount=0;
+    projectionState.Load();assert(g_publicCount==2 && g_outputStorage[2048]==0x5a);
+    g_neutralTypesUnknown=true;projectionState.Save();g_neutralTypesUnknown=false;
+    projectionState.Load();assert(g_neutralTypesUnknown);
+    projectionState.publicPolicyVersion=0xf0505302u;
+    projectionState.Load();assert(!g_neutralTypesUnknown && g_publicCount==2);
+    memset(&projectionState,0,sizeof(projectionState));memset(g_outputStorage,0,sizeof(g_outputStorage));g_publicCount=0;
+    assert(previewInterceptionApi.base.base.base.abi==heroes5_sdk::InterceptionPluginAbi);
+    assert(previewInterceptionApi.interceptions.count==16 && previewInterceptionApi.base.hooks.count==14);
+    PostStartVerification postStart{};
+    heroes5_sdk::EngineContext postContext{};
+    char unitName[]="CREATURE_ARCHER_1";
+    uint32_t unitNameVector[2]{reinterpret_cast<uint32_t>(unitName),reinterpret_cast<uint32_t>(unitName)+sizeof(unitName)-1};
+    int32_t positionFrame[9]{};positionFrame[7]=13;positionFrame[8]=6;
+    postContext.registers.esi=reinterpret_cast<uint32_t>(unitNameVector);
+    postContext.registers.ebp=postContext.registers.esi;
+    postContext.registers.savedEsp=reinterpret_cast<uint32_t>(positionFrame)-4;
+    postContext.registers.eax=40;
+    ObservePostStartResult(31,postContext,postStart);assert(!postStart.positionCount);
+    postStart.generation=8;postStart.armed=1;
+    ObservePostStartResult(31,postContext,postStart);
+    ObservePostStartResult(32,postContext,postStart);
+    assert(postStart.positionCount==1 && postStart.quantityCount==1 && postStart.sequence==4);
+    assert(postStart.positions[0].x==13 && postStart.positions[0].y==6);
+    assert(postStart.quantities[0].quantity==40 && !strcmp(postStart.positions[0].name,unitName));
+    positionFrame[7]=32;ObservePostStartResult(31,postContext,postStart);
+    assert(postStart.failures==1 && postStart.positionCount==1);
+    postContext.registers.eax=0;ObservePostStartResult(32,postContext,postStart);
+    assert(postStart.failures==2 && postStart.quantityCount==1);
+    postContext.registers.ebp=0;postContext.registers.eax=40;
+    ObservePostStartResult(32,postContext,postStart);assert(postStart.failures==3);
+    postContext.registers.ebp=reinterpret_cast<uint32_t>(unitNameVector);postContext.registers.eax=0x7fffffff;
+    ObservePostStartResult(32,postContext,postStart);
+    assert(postStart.quantityCount==2 && postStart.quantities[1].quantity==0x7fffffff);
+    postContext.registers.eax=0x80000000;
+    ObservePostStartResult(32,postContext,postStart);assert(postStart.failures==4);
+    positionFrame[7]=13;
+    for(unsigned index=0;index<7;++index) { ObservePostStartResult(31,postContext,postStart); }
+    assert(postStart.positionCount==7 && postStart.overflow);
+    const auto postSequence=postStart.sequence;
+    postStart.Reset();
+    assert(postStart.sequence==postSequence+2 && !postStart.armed && !postStart.generation);
+    assert(!postStart.positionCount && !postStart.quantityCount && !postStart.positions[0].nameLength);
+    assert(postStart.version==2 && !postStart.rosterObserved && !postStart.defenderCount);
+    uint32_t rosterArguments[14]{};rosterArguments[0]=1;rosterArguments[7]=1;
+    uint32_t rosterUnits[4]{};
+    uint32_t rosterStack[12]{};
+    rosterStack[0x14/4]=reinterpret_cast<uint32_t>(rosterUnits);
+    rosterStack[0x18/4]=rosterStack[0x14/4]+sizeof(rosterUnits);
+    rosterStack[0x20/4]=reinterpret_cast<uint32_t>(rosterArguments);
+    rosterStack[0x24/4]=rosterStack[0x20/4]+sizeof(rosterArguments);
+    heroes5_sdk::EngineContext rosterContext{};
+    rosterContext.registers.savedEsp=reinterpret_cast<uint32_t>(rosterStack)-4;
+    rosterContext.registers.ebp=1;
+    postStart.armed=1;postStart.generation=9;
+    ObservePostStartResult(33,rosterContext,postStart);
+    assert(postStart.rosterObserved && postStart.defenderCount==4 && !postStart.rosterFailures);
+    // Equal two-record prefixes cannot satisfy this independent four-unit roster.
+    postStart.positionCount=postStart.quantityCount=2;
+    assert(postStart.positionCount!=postStart.defenderCount);
+    rosterArguments[0]=0;
+    rosterStack[0x18/4]=rosterStack[0x14/4]+4;
+    ObservePostStartResult(33,rosterContext,postStart);
+    assert(postStart.defenderCount==4 && !postStart.rosterFailures); // attacker ignored
+    rosterArguments[0]=1;rosterArguments[7]=2;rosterContext.registers.ebp=2;
+    ObservePostStartResult(33,rosterContext,postStart);
+    assert(postStart.defenderCount==4 && !postStart.rosterFailures); // war machines ignored
+    rosterArguments[7]=1;rosterContext.registers.ebp=1;
+    ObservePostStartResult(33,rosterContext,postStart);
+    assert(postStart.rosterFailures==1); // a changing defender roster fails closed
+    rosterStack[0x18/4]=rosterStack[0x14/4]+sizeof(rosterUnits)+1;
+    ObservePostStartResult(33,rosterContext,postStart);
+    assert(postStart.rosterFailures==2); // misaligned vector cannot certify completeness
+    rosterStack[0x18/4]=rosterStack[0x14/4]+8*4;
+    ObservePostStartResult(33,rosterContext,postStart);
+    assert(postStart.rosterFailures==3); // defender capacity is bounded at seven
+    rosterStack[0x18/4]=rosterStack[0x14/4]+sizeof(rosterUnits);
+    rosterStack[0x20/4]=0;
+    ObservePostStartResult(33,rosterContext,postStart);
+    assert(postStart.rosterFailures==4);
+    postStart.Reset();
+    assert(!postStart.rosterObserved && !postStart.defenderCount && !postStart.rosterFailures);
+    assert(previewInterceptionApi.interceptions.entries[0].policy.stackPopBytes==8);
+    assert(previewInterceptionApi.interceptions.entries[1].readOnlyReentry==1);
+    uint32_t decoration[1]{0xe2ff58}, ordinary[1]{0x123456}, ownTip[1]{0xe73c70}, otherTip[1]{0xe73c70};
+    uint32_t controller[18]{},provider[20]{};
+    controller[0x44/4]=reinterpret_cast<uint32_t>(provider);
+    provider[2]=reinterpret_cast<uint32_t>(ownTip)+0x130;
+    assert(ProjectionTooltipWindowIsDecoration(decoration,controller));
+    assert(!ProjectionTooltipWindowIsDecoration(ordinary,controller));
+    assert(ProjectionTooltipWindowIsDecoration(ownTip,controller));
+    assert(!ProjectionTooltipWindowIsDecoration(otherTip,controller));
+    projectionState.version=1;projectionState.uiVersion=1;projectionState.publicCount=1;
+    projectionState.placementOwner=0x1234;
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+496)=1;
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+504)=13;
+    uint32_t tooltipStack[4]{0,reinterpret_cast<uint32_t>(controller),0,0x6b8aad};
+    uint32_t windowTable[1]{reinterpret_cast<uint32_t>(decoration)};
+    uint32_t windowTableAddress=reinterpret_cast<uint32_t>(windowTable);
+    heroes5_sdk::EngineInterceptionContext tooltipContext;
+    tooltipContext.engine.residentData=resident;tooltipContext.engine.residentSchema=6;
+    tooltipContext.engine.residentBytes=heroes5_sdk::ContextCapacity;tooltipContext.engine.hasRegisters=1;
+    tooltipContext.engine.registers.savedEsp=reinterpret_cast<uint32_t>(tooltipStack)-4;
+    tooltipContext.engine.registers.edi=reinterpret_cast<uint32_t>(&windowTableAddress)+0x68;
+    assert(HandlePreviewInterception(17,tooltipContext) && tooltipContext.action==heroes5_sdk::EngineCallAction::Branch);
+    assert(tooltipContext.engine.registers.eax==reinterpret_cast<uint32_t>(decoration));
+    tooltipStack[3]=0x111111;tooltipContext.action=heroes5_sdk::EngineCallAction::Continue;
+    assert(HandlePreviewInterception(17,tooltipContext) && tooltipContext.action==heroes5_sdk::EngineCallAction::Continue);
+    tooltipStack[3]=0x6b8aad;tooltipContext.readOnly=1;projectionState.Load();
+    static unsigned char retainedProjection[sizeof(PublicProjectionState)]{};
+    memcpy(retainedProjection,&projectionState,sizeof(projectionState));
+    assert(HandlePreviewInterception(17,tooltipContext) && tooltipContext.action==heroes5_sdk::EngineCallAction::Branch);
+    assert(memcmp(retainedProjection,&projectionState,sizeof(projectionState))==0);
+    assert(!HandlePreviewInterception(15,tooltipContext));
+    tooltipContext.readOnly=0;tooltipContext.action=heroes5_sdk::EngineCallAction::Continue;
+    projectionState.cells[0]=5;projectionState.cells[1]=5;projectionState.hoverX=4;projectionState.hoverY=4;
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+600)=2;
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+640)=13;
+    uint32_t previewScreen[292]{},otherScreen[292]{},untouchedOutput[4]{};int cursor[2]{4,4};
+    previewScreen[0]=otherScreen[0]=0xe1da84;previewScreen[0x488/4]=otherScreen[0x488/4]=0x1234;
+    projectionState.projectionScreen=reinterpret_cast<uint32_t>(previewScreen);
+    tooltipContext.engine.registers.ecx=reinterpret_cast<uint32_t>(otherScreen)+0x18c;
+    tooltipStack[1]=reinterpret_cast<uint32_t>(untouchedOutput);tooltipStack[2]=reinterpret_cast<uint32_t>(cursor);
+    assert(HandlePreviewInterception(15,tooltipContext) && tooltipContext.action==heroes5_sdk::EngineCallAction::Continue);
+    assert(untouchedOutput[0]==0 && untouchedOutput[3]==0);
+    assert(VirtualAlloc(reinterpret_cast<void*>(0x890000),65536,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE));
+    assert(VirtualAlloc(reinterpret_cast<void*>(0x540000),65536,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE));
+    const uintptr_t tooltipSites[]{0x89fbf0,0x54e440};
+    const uintptr_t tooltipTargets[]{reinterpret_cast<uintptr_t>(&PublicDefinitionBoundary),reinterpret_cast<uintptr_t>(&EmptyTooltipBoundary)};
+    for (unsigned index=0;index<2;++index) {
+        auto* instruction=reinterpret_cast<unsigned char*>(tooltipSites[index]);instruction[0]=0xe9;
+        const auto relative=static_cast<uint32_t>(tooltipTargets[index]-tooltipSites[index]-5);
+        memcpy(instruction+1,&relative,4);assert(FlushInstructionCache(GetCurrentProcess(),instruction,5));
+    }
+    assert(VirtualAlloc(reinterpret_cast<void*>(0x20070000),65536,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE));
+    assert(VirtualAlloc(reinterpret_cast<void*>(0x20080000),65536,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE));
+    const uintptr_t nameSites[]{0x4bdad0,0x4c7430};
+    const uintptr_t nameTargets[]{reinterpret_cast<uintptr_t>(&CreatureVisualBoundary),reinterpret_cast<uintptr_t>(&CreatureTextBoundary)};
+    for(unsigned index=0;index<2;++index) {
+        auto* instruction=reinterpret_cast<unsigned char*>(nameSites[index]);instruction[0]=0xe9;
+        *reinterpret_cast<uint32_t*>(instruction+1)=nameTargets[index]-nameSites[index]-5;
+        assert(FlushInstructionCache(GetCurrentProcess(),instruction,5));
+    }
+    wchar_t nativeName[]=L"\u041b\u0443\u0447\u043d\u0438\u043a\u0438";
+    struct NameGuard { uint32_t prefix;wchar_t text[16];uint32_t suffix; } nameGuard{123,{},456};
+    useFixtureDefinition=useFixtureVisual=true;
+    fixtureLocalizedText[0]=reinterpret_cast<uintptr_t>(nativeName);
+    fixtureLocalizedText[1]=reinterpret_cast<uintptr_t>(nativeName+_countof(nativeName)-1);
+    uint16_t previousTop=0,followingTop=0;const unsigned previousMxcsr=_mm_getcsr();
+    __asm { fnstsw previousTop }
+    assert(h5::army::ReadCreatureDisplayName(3,nameGuard.text,16));
+    __asm { fnstsw followingTop }
+    assert(!wcscmp(nameGuard.text,nativeName) && nameGuard.prefix==123 && nameGuard.suffix==456);
+    assert(_mm_getcsr()==previousMxcsr && (previousTop&0x3800)==(followingTop&0x3800));
+    assert(!h5::army::ReadCreatureDisplayName(3,nameGuard.text,2) && !nameGuard.text[0]);
+    fixtureLocalizedText[1]=fixtureLocalizedText[0]+1;
+    assert(!h5::army::ReadCreatureDisplayName(3,nameGuard.text,16));
+    assert(!h5::army::ReadCreatureDisplayName(0,nameGuard.text,16));
+    assert(!h5::army::ReadCreatureDisplayName(512,nameGuard.text,16));
+    assert(!h5::army::ReadCreatureDisplayName(3,nullptr,16));
+    fixtureTextThrows=true;
+    assert(!h5::army::ReadCreatureDisplayName(3,nameGuard.text,16) && !nameGuard.text[0]);
+    fixtureTextThrows=false;
+    __asm { fnstsw followingTop }
+    assert(_mm_getcsr()==previousMxcsr && (previousTop&0x3800)==(followingTop&0x3800));
+    useFixtureDefinition=useFixtureVisual=false;
+    uint32_t cachedTooltip[3]{0,0,1};
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+700)=reinterpret_cast<uint32_t>(cachedTooltip);
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+716)=13;
+    tooltipContext.engine.registers.ecx=reinterpret_cast<uint32_t>(previewScreen);
+    assert(HandlePreviewInterception(15,tooltipContext) && tooltipContext.action==heroes5_sdk::EngineCallAction::Continue);
+    tooltipContext.engine.registers.ecx=reinterpret_cast<uint32_t>(previewScreen)+0x18c;
+    assert(HandlePreviewInterception(15,tooltipContext) && tooltipContext.action==heroes5_sdk::EngineCallAction::ReturnEax);
+    assert(tooltipContext.result==reinterpret_cast<uint32_t>(untouchedOutput));
+    assert(untouchedOutput[3]==reinterpret_cast<uint32_t>(cachedTooltip) && cachedTooltip[2]==2);
+    uint32_t upgrades[2]{14,15};useFixtureDefinition=true;
+    fixtureDefinition[0x104/4]=reinterpret_cast<uint32_t>(upgrades);
+    fixtureDefinition[0x108/4]=reinterpret_cast<uint32_t>(upgrades+2);
+    provider[0]=0xe34b74;provider[3]=reinterpret_cast<uint32_t>(cachedTooltip);
+    controller[0x10/4]=reinterpret_cast<uint32_t>(previewScreen)+0x18c;
+    tooltipStack[1]=reinterpret_cast<uint32_t>(controller);tooltipStack[3]=0x6b8aad;
+    tooltipContext.action=heroes5_sdk::EngineCallAction::Continue;
+    assert(HandlePreviewInterception(17,tooltipContext));
+    assert(projectionState.uiVersion==4 && projectionState.tooltipController==reinterpret_cast<uint32_t>(controller));
+    tooltipContext.engine.registers.ecx=reinterpret_cast<uint32_t>(provider);
+    tooltipContext.action=heroes5_sdk::EngineCallAction::Continue;
+    assert(HandlePreviewInterception(20,tooltipContext) && provider[4]==1);
+    assert(tooltipContext.action==heroes5_sdk::EngineCallAction::Continue);
+    provider[4]=0;tooltipContext.readOnly=1;
+    assert(!HandlePreviewInterception(20,tooltipContext) && !provider[4]);tooltipContext.readOnly=0;
+    controller[0x10/4]=reinterpret_cast<uint32_t>(otherScreen)+0x18c;
+    assert(HandlePreviewInterception(20,tooltipContext) && !provider[4]);
+    assert(HandlePreviewInterception(21,tooltipContext) && !provider[4]);
+    assert(projectionState.tooltipChoice[0]==0);
+    controller[0x10/4]=reinterpret_cast<uint32_t>(previewScreen)+0x18c;
+    uint32_t foreignProvider[20]{0xe34b74};foreignProvider[3]=reinterpret_cast<uint32_t>(cachedTooltip);
+    tooltipContext.engine.registers.ecx=reinterpret_cast<uint32_t>(foreignProvider);
+    assert(HandlePreviewInterception(20,tooltipContext) && !foreignProvider[4]);
+    assert(HandlePreviewInterception(21,tooltipContext) && !foreignProvider[4]);
+    uint32_t rotatorReferenceOffsets[3]{0,12,12};
+    uint32_t ownedRotator[10]{0xe4046c},foreignRotator[10]{0xe4046c};
+    ownedRotator[1]=reinterpret_cast<uint32_t>(rotatorReferenceOffsets);ownedRotator[6]=1;
+    projectionState.Load();BindProjectionDetailsRotator(ownedRotator,0,true);
+    assert(ownedRotator[6]==2 && g_detailsRotatorOwned);
+    BindProjectionDetailsRotator(ownedRotator,0,true);assert(ownedRotator[6]==2);
+    projectionState.Save();
+    tooltipContext.engine.callSite=h5::hooks::ProjectionDetailsCanRotate.address;
+    tooltipContext.engine.registers.esi=reinterpret_cast<uint32_t>(ownedRotator);
+    tooltipContext.readOnly=1;tooltipContext.action=heroes5_sdk::EngineCallAction::Continue;
+    static unsigned char readonlyDetails[sizeof(PublicProjectionState)]{};
+    memcpy(readonlyDetails,&projectionState,sizeof(projectionState));
+    assert(HandlePreviewInterception(22,tooltipContext) && tooltipContext.action==heroes5_sdk::EngineCallAction::Branch);
+    assert(tooltipContext.engine.registers.eax==1 && tooltipContext.engine.registers.ecx==reinterpret_cast<uint32_t>(ownedRotator));
+    assert(memcmp(readonlyDetails,&projectionState,sizeof(projectionState))==0);
+    auto* managedMethods=reinterpret_cast<uint32_t*>(resident+DetailsNativeMethodsOffset);
+    memcpy(managedMethods,h5::hooks::DetailsRotatorMethods,64);
+    managedMethods[5]=h5::hooks::DetailsRotationAvailable.address;
+    ownedRotator[0]=foreignRotator[0]=reinterpret_cast<uint32_t>(managedMethods+1);
+    tooltipContext.action=heroes5_sdk::EngineCallAction::Continue;
+    assert(HandlePreviewInterception(22,tooltipContext) && tooltipContext.action==heroes5_sdk::EngineCallAction::Branch);
+    assert(tooltipContext.engine.registers.eax==1);
+    assert(!HandlePreviewInterception(23,tooltipContext));
+    tooltipContext.engine.registers.esi=reinterpret_cast<uint32_t>(foreignRotator);
+    tooltipContext.action=heroes5_sdk::EngineCallAction::Continue;
+    assert(HandlePreviewInterception(22,tooltipContext) && tooltipContext.action==heroes5_sdk::EngineCallAction::Continue);
+    tooltipContext.engine.registers.esi=reinterpret_cast<uint32_t>(ownedRotator);tooltipContext.engine.callSite=1;
+    assert(HandlePreviewInterception(22,tooltipContext) && tooltipContext.action==heroes5_sdk::EngineCallAction::Continue);
+    ReleaseProjectionDetailsRotator();assert(ownedRotator[6]==1 && !g_detailsRotatorOwned);
+    assert(ownedRotator[0]==0xe4046c && foreignRotator[0]==reinterpret_cast<uint32_t>(managedMethods+1));
+    ReleaseProjectionDetailsRotator();assert(ownedRotator[6]==1);
+    projectionState.Save();tooltipContext.readOnly=0;
+    useFixtureDefinition=false;
+    assert(VirtualFree(reinterpret_cast<void*>(0x890000),0,MEM_RELEASE));
+    assert(VirtualFree(reinterpret_cast<void*>(0x540000),0,MEM_RELEASE));
+    memset(&projectionState,0,sizeof(projectionState));memset(g_outputStorage,0,sizeof(g_outputStorage));g_publicCount=0;
+    ResetProjectionTooltipChoices();
+    heroes5_sdk::EngineContext finalContext;
+    finalContext.residentSchema=6;finalContext.residentBytes=heroes5_sdk::ContextCapacity;finalContext.residentData=resident;
+    assert(!Heroes5PluginFinalize(&finalContext));
+    finalContext.window=CreateWindowExW(0,L"STATIC",L"Isolated predictor cleanup",0,0,0,1,1,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+    assert(finalContext.window);
+    assert(VirtualAlloc(reinterpret_cast<void*>(0x20050000),65536,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE));
+    auto* activeInstruction=reinterpret_cast<unsigned char*>(0x20059e10);activeInstruction[0]=0xe9;
+    const auto activeRelative=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(&ActiveScreenBoundary)-0x20059e10-5);
+    memcpy(activeInstruction+1,&activeRelative,4);assert(FlushInstructionCache(GetCurrentProcess(),activeInstruction,5));
+    projectionState.version=1;projectionState.uiVersion=1;projectionState.publicCount=1;
+    projectionState.placementOwner=0x1234;projectionState.projectionScreen=reinterpret_cast<uint32_t>(previewScreen);
+    projectionState.cells[0]=5;projectionState.cells[1]=5;projectionState.hoverX=4;projectionState.hoverY=4;
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+496)=1;
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+504)=13;
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+600)=2;
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+640)=13;
+    heroes5_sdk::WindowInputContext input;input.engine=finalContext;input.message=WM_LBUTTONDBLCLK;
+    input.lparam=MAKELPARAM(120,230);
+    assert(Heroes5PluginWindowInput(&input));
+    assert(projectionState.uiVersion==4 && projectionState.detailsSlot==0 && projectionState.detailsPoint[0]==120 && projectionState.detailsPoint[1]==230);
+    g_detailsSlot=-1;projectionState.Load();assert(g_detailsSlot==0 && g_detailsGeneration==projectionState.placementGeneration);
+    auto* retainedMethods=reinterpret_cast<uint32_t*>(resident+DetailsNativeMethodsOffset);
+    memcpy(retainedMethods,h5::hooks::DetailsRotatorMethods,64);
+    retainedMethods[5]=h5::hooks::DetailsRotationAvailable.address;
+    assert(EnsurePreviewStorage(finalContext) && g_detailsNativeMethods==retainedMethods+1);
+    BindProjectionDetailsRotator(ownedRotator,0,true);
+    ownedRotator[0]=reinterpret_cast<uint32_t>(g_detailsNativeMethods);
+    projectionState.Save();
+    assert(Heroes5PluginPrepareReplace(&finalContext));
+    assert(projectionState.projectionScreen==reinterpret_cast<uint32_t>(previewScreen));
+    assert(!projectionState.detailsRotatorOwned && ownedRotator[6]==1 && ownedRotator[0]==0xe4046c);
+    assert(retainedMethods[5]==h5::hooks::DetailsRotationAvailable.address);
+    assert(Heroes5PluginWindowInput(&input) && projectionState.detailsSlot==0);
+    input.version=2;assert(!Heroes5PluginWindowInput(&input));
+    assert(VirtualFree(reinterpret_cast<void*>(0x20050000),0,MEM_RELEASE));
+    projectionState.version=1;projectionState.uiVersion=1;projectionState.publicCount=1;
+    projectionState.placementOwner=0x1234;projectionState.root=0x5678;projectionState.grid=0x9abc;
+    projectionState.projectionScreen=0x1234;projectionState.tooltipClickSlot=2;projectionState.tooltipChoice[2]=1;
+    assert(VirtualAlloc(reinterpret_cast<void*>(0x570000),65536,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE));
+    assert(VirtualAlloc(reinterpret_cast<void*>(0x8c0000),65536,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE));
+    const uintptr_t boundarySites[]{0x576b40,0x8c6150,0x8c61d0};
+    const uintptr_t boundaryTargets[]{reinterpret_cast<uintptr_t>(&ReleaseModelBoundary),
+        reinterpret_cast<uintptr_t>(&ReleaseCacheBoundary),reinterpret_cast<uintptr_t>(&ReleaseGlowBoundary)};
+    for (unsigned index=0;index<3;++index) {
+        auto* instruction=reinterpret_cast<unsigned char*>(boundarySites[index]);instruction[0]=0xe9;
+        const auto relative=static_cast<uint32_t>(boundaryTargets[index]-boundarySites[index]-5);
+        memcpy(instruction+1,&relative,4);assert(FlushInstructionCache(GetCurrentProcess(),instruction,5));
+    }
+    uint32_t cacheObject[3]{0,0,1},glowNode[2]{0,1},glowColor[2]{0,1};
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+728)=0x1234;
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+700)=reinterpret_cast<uint32_t>(cacheObject);
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+716)=13;
+    *reinterpret_cast<uint32_t*>(projectionState.models+8+496)=1;
+    projectionState.glows[0].node=glowNode;projectionState.glows[0].color=glowColor;
+    assert(Heroes5PluginFinalize(&finalContext));
+    assert(releasedModels==7 && releasedCaches==1 && releasedGlows==2 && cacheObject[2]==0);
+    assert(!projectionState.glows[0].node && !projectionState.glows[0].color);
+    assert(!*reinterpret_cast<uint32_t*>(projectionState.models+8+700));
+    assert(!*reinterpret_cast<uint32_t*>(projectionState.models+8+728));
+    assert(!projectionState.publicCount && !projectionState.placementOwner && !projectionState.root && !projectionState.grid);
+    assert(!projectionState.projectionScreen && projectionState.tooltipClickSlot==-1 && !projectionState.tooltipChoice[2]);
+    assert(Heroes5PluginFinalize(&finalContext));
+    assert(releasedModels==7 && releasedCaches==1 && releasedGlows==2);
+    assert(VirtualFree(reinterpret_cast<void*>(0x570000),0,MEM_RELEASE));
+    assert(VirtualFree(reinterpret_cast<void*>(0x8c0000),0,MEM_RELEASE));
+    assert(DestroyWindow(finalContext.window));
+    PreviewSessionState state{}; heroes5_sdk::EngineContext context{};
+    context.residentSchema = 6; context.residentBytes = heroes5_sdk::ContextCapacity;
+    context.residentData = resident; context.hasRegisters = 1;
+    uint32_t result = 99;
+    auto& journal = *reinterpret_cast<PreviewInputCapture*>(resident + 8192);
+    memset(resident + 4096, 0xa5, sizeof(sample));
+    assert(DispatchPreview(12, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.count == 0 && resident[4096] == 0xa5);
+    assert(DispatchPreview(18, 1, &state, sizeof(state), &result) && result == 1);
+    assert(DispatchPreview(3, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(DispatchPreview(12, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.count == 1 && journal.records[0].sample.unsupported == 2);
+    uint32_t stack[13]{};
+    stack[10] = 55; stack[12] = 0x123;
+    context.registers.savedEsp = reinterpret_cast<uint32_t>(stack) - 4;
+    context.registers.edi = 88; context.registers.ebp = 77;
+    assert(DispatchPreview(9, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.actorCount == 1 && !journal.actorOverflow);
+    assert(journal.actors[0].unsupported == 1 && journal.actors[0].damage == 77);
+    assert(journal.actors[0].aggregateIdentity == 88 && journal.actors[0].specialCategory == 0x23);
+    assert(journal.actors[0].attackGeneration == 1);
+    context.registers.savedEsp = 0;
+    assert(DispatchPreview(9, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.actorCount == 2 && journal.actors[1].unsupported == 0x80000000u);
+    context.registers.savedEsp = reinterpret_cast<uint32_t>(stack) - 4;
+    context.registers.ebx = static_cast<uint32_t>(-17); context.registers.eax = 23;
+    assert(DispatchPreview(10, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.heroCorrectionCount == 1 && !journal.heroCorrectionOverflow);
+    assert(journal.heroCorrections[0].aggregateIdentity == 88 && journal.heroCorrections[0].inputCount == 2);
+    assert(journal.heroCorrections[0].firstScalar == -17 && journal.heroCorrections[0].secondScalar == 23);
+    assert(journal.heroCorrections[0].attackGeneration == 1);
+    stack[0] = 99; stack[3] = static_cast<uint32_t>(-42); stack[7] = 0xbfbb90;
+    assert(DispatchPreview(11, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.auxiliaryCount == 1 && journal.auxiliaryInputs[0].inputCount == 2);
+    assert(journal.auxiliaryInputs[0].aggregateIdentity == 99 && journal.auxiliaryInputs[0].value == -42);
+    assert(journal.auxiliaryInputs[0].caller == 0xbfbb90 && journal.auxiliaryInputs[0].attackGeneration == 1);
+    stack[7] = 0x111111;
+    assert(DispatchPreview(11, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.auxiliaryCount == 1 && journal.auxiliaryFrameFailures == 0);
+    context.registers.savedEsp = 0;
+    assert(DispatchPreview(11, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.auxiliaryCount == 1 && journal.auxiliaryFrameFailures == 1);
+    context.registers.savedEsp = reinterpret_cast<uint32_t>(stack) - 4;
+    stack[7] = 0xbfbbc3;
+    journal.heroCorrectionCount = h5_preview::PlacementHeroCorrectionCapacity-1;
+    assert(DispatchPreview(10, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.heroCorrectionCount == h5_preview::PlacementHeroCorrectionCapacity && !journal.heroCorrectionOverflow);
+    assert(DispatchPreview(10, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.heroCorrectionCount == h5_preview::PlacementHeroCorrectionCapacity && journal.heroCorrectionOverflow);
+    journal.auxiliaryCount = h5_preview::PlacementAuxiliaryInputCapacity-1;
+    assert(DispatchPreview(11, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.auxiliaryCount == h5_preview::PlacementAuxiliaryInputCapacity && !journal.auxiliaryOverflow);
+    assert(DispatchPreview(11, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.auxiliaryCount == h5_preview::PlacementAuxiliaryInputCapacity && journal.auxiliaryOverflow);
+    journal.actorCount = h5_preview::PlacementActorInputCapacity-1;
+    assert(DispatchPreview(9, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.actorCount == h5_preview::PlacementActorInputCapacity && !journal.actorOverflow);
+    assert(DispatchPreview(9, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.actorCount == h5_preview::PlacementActorInputCapacity && journal.actorOverflow);
+    assert(DispatchPreview(8, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.frozen && journal.count == 1);
+    assert(journal.coreMask == 0 && journal.coreErrors == 1);
+    assert((journal.sequence & 1) == 0);
+    auto& factsOnly = *reinterpret_cast<PostStartVerification*>(resident + PostStartVerificationOffset);
+    assert(factsOnly.playerFrozen==1 && factsOnly.playerGeneration==projectionState.attackGeneration &&
+        factsOnly.playerForecastCount==0);
+    assert(DispatchPreview(12, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.count == 1 && journal.observations == 1);
+    assert(DispatchPreview(9, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.actorCount == h5_preview::PlacementActorInputCapacity);
+    assert(DispatchPreview(10, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(DispatchPreview(11, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.heroCorrectionCount == h5_preview::PlacementHeroCorrectionCapacity && journal.auxiliaryCount == h5_preview::PlacementAuxiliaryInputCapacity);
+    assert(DispatchPreview(3, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.count == 0 && journal.generation == 2 && !journal.frozen);
+    assert(journal.actorCount == 0 && !journal.actorOverflow);
+    assert(journal.heroCorrectionCount == 0 && !journal.heroCorrectionOverflow);
+    assert(journal.auxiliaryCount == 0 && !journal.auxiliaryOverflow && journal.auxiliaryFrameFailures == 0);
+    assert(DispatchPreview(18, 0, &state, sizeof(state), &result) && result == 0);
+    assert(DispatchPreview(12, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.count == 0);
+    assert(DispatchPreview(9, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.actorCount == 0);
+    assert(DispatchPreview(10, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(DispatchPreview(11, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.heroCorrectionCount == 0 && journal.auxiliaryCount == 0);
+    context.residentSchema = 1;
+    assert(!DispatchPreview(12, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    context.residentSchema = 2;
+    assert(!DispatchPreview(12, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    context.residentSchema = 3;
+    assert(!DispatchPreview(12, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    context.residentSchema = 4;
+    assert(!DispatchPreview(12, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    context.residentSchema = 5;
+    assert(!DispatchPreview(12, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    context.residentSchema = 6;
+    journal.version = 4; journal.count = 1;
+    journal.records[0].sample.input.quantity = 123;
+    const auto callsBefore = *reinterpret_cast<uint32_t*>(resident);
+    const auto sequenceBefore = journal.sequence;
+    assert(!DispatchPreview(3, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(journal.version == 4 && journal.count == 1 && journal.records[0].sample.input.quantity == 123);
+    assert(journal.sequence == sequenceBefore && *reinterpret_cast<uint32_t*>(resident) == callsBefore);
+    assert(previewApi.base.residentSchema == 6);
+    uint32_t world[37]{}, firstArmy[1]{0xe17bcc}, secondArmy[1]{0xe17bcc}, sides[2]{};
+    world[0] = 0xe79d3c;
+    world[0x8c/4] = reinterpret_cast<uint32_t>(firstArmy);
+    world[0x90/4] = reinterpret_cast<uint32_t>(secondArmy);
+    assert(h5::army::ReadActorArmySides(reinterpret_cast<uint32_t>(world), sides));
+    assert(sides[0] == world[0x8c/4] && sides[1] == world[0x90/4]);
+    assert(!h5::army::ReadActorArmySides(0, sides) && sides[0] == 0 && sides[1] == 0);
+    secondArmy[0] = 0;
+    assert(!h5::army::ReadActorArmySides(reinterpret_cast<uint32_t>(world), sides));
+    secondArmy[0] = 0xe17bcc;
+    assert(h5::army::ReadActorArmySides(reinterpret_cast<uint32_t>(world), sides));
+    journal.Begin();journal.frozen = 1;
+    journal.worldIdentity = reinterpret_cast<uint32_t>(world);
+    journal.armyIdentities[0] = sides[0];journal.armyIdentities[1] = sides[1];
+    journal.actorCount = 2;
+    for (uint32_t side = 0; side < 2; ++side) {
+        auto& actor = journal.actors[side];actor = {};
+        actor.world = journal.worldIdentity;actor.army = sides[side];actor.source = 100 + side;
+        actor.type = 13 + side;actor.quantity = 10;actor.damage = 20;actor.attack = 4;
+        actor.defence = 5;actor.health = 100;actor.initiative = 10;actor.speed = 4;
+        actor.category = 2;actor.eligible = 1;actor.controlWord = 0x0c7f;
+        actor.aggregateIdentity = 200 + side;actor.attackGeneration = journal.generation;
+    }
+    journal.CalculateCores();
+    assert(journal.coreMask == 3 && journal.coreErrors == 0);
+    assert(journal.coreStackCounts[0] == 1 && journal.coreStackCounts[1] == 1);
+    assert(journal.coreInputEnds[0] == 1 && journal.coreInputEnds[1] == 2);
+    assert(journal.coreAggregates[0].damage == 20 && journal.coreAggregates[1].health == 100);
+    journal.auxiliaryCount = 2;
+    journal.auxiliaryInputs[0] = {200, 1, 56, h5::army::ActorProtectionCapacity, 0x0c7f, journal.generation};
+    journal.auxiliaryInputs[1] = {200, 1, 0x3f000000, h5::army::ActorProtectionFraction, 0x0c7f, journal.generation};
+    journal.CalculateCores();
+    assert(journal.coreMask == 3 && journal.coreCorrectionMasks[0] == 4);
+    assert(journal.coreAggregates[0].health == 300 && journal.coreAggregates[0].eligibleHealth == 300);
+    assert(journal.coreAggregates[0].defence == 6 && journal.coreAggregates[0].damage == 20);
+    assert(journal.coreAggregates[1].health == 100);
+    journal.auxiliaryCount = 1;journal.CalculateCores();
+    assert(journal.coreMask == 2); // An unpaired protection primitive is incomplete.
+    journal.auxiliaryCount = 3;journal.auxiliaryInputs[2] = journal.auxiliaryInputs[0];journal.CalculateCores();
+    assert(journal.coreMask == 2); // Duplicate state cannot be silently combined.
+    journal.auxiliaryCount = 0;journal.CalculateCores();
+    const float strategySettings[4]{0.05f, 0.025f, 0.2f, 1.3f};
+    journal.CalculateCores(strategySettings);
+    assert(journal.strategyMask == 0); // Missing full army size is not a complete policy input.
+    journal.actors[0].armySize = journal.actors[1].armySize = 1;
+    journal.CalculateCores(strategySettings);
+    assert(journal.strategyMask == 3 && journal.strategyTrace[0][0] == 1 && journal.strategyTrace[1][0] == 1);
+    assert(!journal.strategyTrace[0][1] && !journal.strategyTrace[1][1]);
+    journal.actors[0].rangedCapability = 1;
+    journal.CalculateCores(strategySettings);
+    assert(journal.strategyTrace[0][1] && !journal.strategyTrace[1][1]);
+    journal.actors[0].rangedCapability = 0;
+
+    journal.actorOverflow = 1;journal.CalculateCores();
+    assert(journal.coreMask == 0 && journal.coreErrors == 1 && journal.coreAggregates[0].damage == 0 && journal.strategyMask == 0 && journal.strategyTrace[0][0] == 0);
+    journal.actorOverflow = 0;journal.sideConflict = 1;journal.CalculateCores();
+    assert(journal.coreMask == 0 && journal.coreErrors == 1);
+    journal.sideConflict = 0;journal.CalculateCores();
+    h5_preview::PlacementAggregate expectedCores[2];
+    memcpy(expectedCores, journal.coreAggregates, sizeof(expectedCores));
+    journal.frozen = 0;journal.version = 7;
+    assert(DispatchPreview(18, 1, &state, sizeof(state), &result));
+    context.registers.ecx = 0x1234;
+    assert(DispatchPreview(6, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    context.registers.edi = 0x9999;
+    context.registers.savedEsp = reinterpret_cast<uint32_t>(stack) - 4;
+    stack[0] = h5::hooks::PlacementRendererCaller;
+    assert(DispatchPreview(4, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(!journal.frozen);
+    context.registers.edi = 0x1234;stack[0] = 0x111111;
+    assert(DispatchPreview(4, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(!journal.frozen);
+    context.registers.savedEsp = 0;
+    assert(DispatchPreview(4, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(!journal.frozen);
+    context.registers.savedEsp = reinterpret_cast<uint32_t>(stack) - 4;
+    stack[0] = h5::hooks::PlacementRendererCaller;
+    __asm { fninit }
+    __asm { fld1 }
+    __asm { fld1 }
+    __asm { fld1 }
+    __asm { fld1 }
+    __asm { fld1 }
+    __asm { fld1 }
+    __asm { fld1 }
+    __asm { fld1 }
+    assert(DispatchPreview(4, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    for (uint32_t index = 0; index < 8; ++index) {
+        float restoredValue = 0;
+        __asm { fstp restoredValue }
+        assert(restoredValue == 1.0f);
+    }
+    __asm { fninit }
+    assert(journal.frozen && journal.coreMask == 3 && journal.coreErrors == 0);
+    assert(memcmp(expectedCores, journal.coreAggregates, sizeof(expectedCores)) == 0);
+    assert(DispatchPreview(8, reinterpret_cast<uint32_t>(&context), &state, sizeof(state), &result));
+    assert(memcmp(expectedCores, journal.coreAggregates, sizeof(expectedCores)) == 0);
+    auto& verification = *reinterpret_cast<PolicyVerification*>(resident + PolicyVerificationOffset);
+    verification = {};verification.version = 2;verification.generation = journal.generation;
+    memset(journal.auxiliaryInputs, 0x5a, sizeof(journal.auxiliaryInputs));
+    unsigned char retainedAuxiliary[sizeof(journal.auxiliaryInputs)];
+    memcpy(retainedAuxiliary, journal.auxiliaryInputs, sizeof(retainedAuxiliary));
+    uint32_t policy[53]{};
+    policy[0] = 1;policy[0xd0/4] = 1;
+    for (uint32_t index = 0; index < 36; ++index) { policy[0x38/4+index] = 100+index; }
+    context.registers.ecx = reinterpret_cast<uint32_t>(policy);
+    journal.frozen = 0;
+    const auto retainedMask = journal.coreMask;
+    journal.coreMask = 0;
+    const uint32_t expectedPolicyInputCounts[]{journal.actorCount, journal.auxiliaryCount, journal.heroCorrectionCount};
+    ObserveNativePolicy(context, journal, verification, state.adminCapture == 1);
+    assert(!journal.frozen && journal.coreMask == 0);
+    journal.frozen = 1;journal.coreMask = retainedMask;
+    assert(verification.count == 1 && verification.observations[0].side == 1);
+    assert(verification.intervalVersion == 1 && verification.intervalGeneration == journal.generation);
+    assert(memcmp(verification.capturedInputCounts[0], expectedPolicyInputCounts, sizeof(expectedPolicyInputCounts)) == 0);
+    assert(verification.observations[0].aggregates[1][17] == 135);
+    assert(verification.capabilityArmyCounts[0][2] == 0); // Missing army context is not a valid zero-sized list.
+    assert(verification.capabilityContexts[0][7] == 1);
+    int32_t capabilityMetadata[2]{};
+    uint32_t capabilityArmy[13]{};capabilityArmy[0]=0xe17bcc;
+    capabilityArmy[1]=reinterpret_cast<uint32_t>(capabilityMetadata);
+    capabilityArmy[0x28/4]=0x1000;capabilityArmy[0x2c/4]=0x1004;
+    uint32_t capabilityArgument=0xabcdef00; // Native bool uses the low byte only.
+    heroes5_sdk::EngineInterceptionContext capabilityCall;
+    capabilityCall.engine=context;
+    capabilityCall.engine.callSite=h5::hooks::DefensiveCapabilityFirst.address;
+    capabilityCall.engine.registers.ecx=reinterpret_cast<uint32_t>(capabilityArmy);
+    capabilityCall.engine.registers.savedEsp=reinterpret_cast<uint32_t>(&capabilityArgument)-4;
+    ObserveNativeCapabilityCall(25,capabilityCall.engine,journal,verification,state.adminCapture==1);
+    assert(capabilityCall.action==heroes5_sdk::EngineCallAction::Continue);
+    assert(verification.capabilityCallCount==1 && verification.capabilityCalls[0][2]==1);
+    assert(verification.capabilityCalls[0][3]==0 && verification.capabilityCalls[0][4]==0);
+    capabilityArmy[0x2c/4]=0x1000;capabilityArmy[2]=0x80000000;
+    capabilityArgument=1;capabilityCall.engine.callSite=h5::hooks::DefensiveCapabilitySecond.address;
+    ObserveNativeCapabilityCall(26,capabilityCall.engine,journal,verification,state.adminCapture==1);
+    assert(verification.capabilityCallCount==2 && verification.capabilityCalls[1][2]==0);
+    assert(verification.capabilityCalls[1][3]==1 && verification.capabilityCalls[1][4]==1);
+    capabilityArmy[0x28/4]=0x1001;capabilityArmy[0x2c/4]=0x1005;
+    ObserveNativeCapabilityCall(26,capabilityCall.engine,journal,verification,state.adminCapture==1);
+    assert(verification.capabilityCallCount==2 && verification.capabilityCallFailures==1);
+    capabilityArmy[0x2c/4]=0x1001;
+    ObserveNativeCapabilityCall(26,capabilityCall.engine,journal,verification,state.adminCapture==1);
+    assert(verification.capabilityCallCount==2 && verification.capabilityCallFailures==2);
+    capabilityCall.engine.registers.eax=0xffffff01;
+    ObserveNativeCapabilityCall(27,capabilityCall.engine,journal,verification,true);
+    assert(verification.capabilityCallCount==3 && verification.capabilityCalls[2][1]==1);
+    capabilityCall.engine.registers.eax=0xffffff00;
+    ObserveNativeCapabilityCall(28,capabilityCall.engine,journal,verification,true);
+    assert(verification.capabilityCallCount==4 && verification.capabilityCalls[3][1]==0);
+    capabilityCall.engine.registers.ebp=1234;
+    ObserveNativeCapabilityCall(29,capabilityCall.engine,journal,verification,true);
+    assert(verification.capabilityCallCount==5 && verification.capabilityCalls[4][1]==0);
+    assert(verification.capabilityCalls[4][2]==1234);
+    assert(verification.policyCallContexts[0][0]==reinterpret_cast<uint32_t>(policy));
+    capabilityArmy[0x28/4]=capabilityArmy[0x2c/4]=0;
+    verification.capabilityCallCount=8;
+    ObserveNativeCapabilityCall(26,capabilityCall.engine,journal,verification,state.adminCapture==1);
+    assert(verification.capabilityCallCount==9 && !verification.capabilityCallOverflow);
+    assert(verification.capabilityCalls[8][0]==26);
+    verification.capabilityCallCount=CapabilityCallCapacity;
+    ObserveNativeCapabilityCall(26,capabilityCall.engine,journal,verification,state.adminCapture==1);
+    assert(verification.capabilityCallCount==CapabilityCallCapacity && verification.capabilityCallOverflow==1);
+    assert(DispatchPreview(18,0,&state,sizeof(state),&result));
+    capabilityCall.engine.registers.ecx=0;
+    ObserveNativeCapabilityCall(26,capabilityCall.engine,journal,verification,state.adminCapture==1);
+    assert(verification.capabilityCallFailures==2);
+    assert(DispatchPreview(18,1,&state,sizeof(state),&result));
+    assert(memcmp(expectedCores, journal.coreAggregates, sizeof(expectedCores)) == 0);
+    context.registers.ecx = 0;
+    ObserveNativePolicy(context, journal, verification, state.adminCapture == 1);
+    assert(verification.count == 1 && verification.failures == 1);
+    context.registers.ecx = reinterpret_cast<uint32_t>(policy);
+    verification.count = 8;
+    ObserveNativePolicy(context, journal, verification, state.adminCapture == 1);
+    assert(verification.count == 9 && !verification.overflow);
+    verification.count = PolicyObservationCapacity;
+    ObserveNativePolicy(context, journal, verification, state.adminCapture == 1);
+    assert(verification.count == PolicyObservationCapacity && verification.overflow);
+    assert(DispatchPreview(18, 0, &state, sizeof(state), &result));
+    const auto failures = verification.failures;
+    context.registers.ecx = 0;
+    ObserveNativePolicy(context, journal, verification, state.adminCapture == 1);
+    assert(verification.failures == failures);
+    assert(previewVerificationApi.hooks.count == 16 && previewVerificationApi.hooks.entries[15].command == 19);
+    assert(memcmp(retainedAuxiliary, journal.auxiliaryInputs, sizeof(retainedAuxiliary)) == 0);
+    assert(!PolicyVerificationAvailable());
+    assert(!DispatchPreview(19, 1, &state, sizeof(state), &result));
+    assert(!DispatchPreview(31, 1, &state, sizeof(state), &result));
+    assert(!DispatchPreview(32, 1, &state, sizeof(state), &result));
+    // Precise mode uses the preserved configuration, not diagnostic admission.
+    assert(DispatchPreview(18,0,&state,sizeof(state),&result));
+    assert(!DispatchPreview(30,2,&state,sizeof(state),&result));
+    assert(!DispatchPreview(37,2,&state,sizeof(state),&result));
+    assert(DispatchPreview(37,0,&state,sizeof(state),&result) && result==0);
+    assert(!g_neutralTypesUnknown); // A command does not mutate the current plan.
+    ConfigureResearchMode();assert(g_neutralTypesUnknown);
+    assert(DispatchPreview(37,1,&state,sizeof(state),&result) && result==1);
+    assert(g_neutralTypesUnknown);
+    ConfigureResearchMode();assert(!g_neutralTypesUnknown);
+    assert(DispatchPreview(30,1,&state,sizeof(state),&result) && result==1);
+    assert(!projectionState.research.enabled); // Takes effect at the next attack.
+    assert(SetEnvironmentVariableW(L"H5_PREVIEW_SUPERADMIN_SPREAD",L"1"));
+    context.registers.eax=0;
+    assert(DispatchPreview(3,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(projectionState.research.version==3 && projectionState.research.enabled);
+    assert(!projectionState.research.actorInputsFrozen && projectionState.research.useSpreadRows);
+    assert(projectionState.research.superadminSourceCount==0);
+    context.registers.edi=99;context.registers.ebx=static_cast<uint32_t>(-4);context.registers.eax=2;
+    assert(DispatchPreview(10,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(projectionState.research.heroCorrectionCount==1);
+    assert(projectionState.research.heroCorrections[0].aggregateIdentity==99);
+    assert(projectionState.research.heroCorrections[0].firstScalar==-4);
+    assert(projectionState.research.heroCorrections[0].secondScalar==2);
+    assert(!journal.heroCorrectionCount); // Research did not turn diagnostic capture on.
+    uint32_t researchRandom[3]{0xe51284,0,123456};
+    context.registers.eax=reinterpret_cast<uint32_t>(researchRandom);
+    assert(DispatchPreview(13,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(projectionState.research.sourceSplitSeed[1]==123456);
+    uint32_t researchStack[13]{};
+    researchStack[0]=99;researchStack[3]=static_cast<uint32_t>(-7);
+    researchStack[7]=0xbfbb90;researchStack[8]=4;researchStack[9]=1;
+    context.registers.esi=0;context.registers.savedEsp=reinterpret_cast<uint32_t>(researchStack)-4;
+    assert(DispatchPreview(11,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(projectionState.research.auxiliaryInputCount==1 && projectionState.research.auxiliaryInputs[0].value==-7);
+    assert(projectionState.research.areaInputCount==1 && (projectionState.research.areaInputs[0].metadata[5]&1));
+    // A missing actor frame invalidates the precise input set instead of forging a stack.
+    context.registers.savedEsp=0;
+    assert(DispatchPreview(9,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(projectionState.research.actorInputOverflow && projectionState.research.sourceStrengthOverflow);
+    // Scripted combat may be the first event; its source vector is borrowed synchronously.
+    memset(&projectionState,0,sizeof(projectionState));
+    uint32_t scriptedStacks[4]{57,80,65,12},scriptedFrame[32]{};
+    scriptedFrame[21]=reinterpret_cast<uint32_t>(scriptedStacks);
+    scriptedFrame[22]=reinterpret_cast<uint32_t>(scriptedStacks+4);
+    scriptedFrame[23]=scriptedFrame[22];
+    context.registers.savedEsp=reinterpret_cast<uint32_t>(scriptedFrame)-4;
+    assert(DispatchPreview(14,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(projectionState.research.enabled && projectionState.attackGeneration==1);
+    assert(projectionState.research.superadminSourceKind==2 && projectionState.research.superadminSourceCount==2);
+    assert(projectionState.research.superadminSourceTypes[0]==57 && projectionState.research.superadminSourceCounts[0]==80);
+    context.registers.ecx=0x1234;
+    assert(DispatchPreview(6,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(projectionState.research.superadminSourceGeneration==projectionState.placementGeneration);
+    assert(DispatchPreview(30,0,&state,sizeof(state),&result) && result==0);
+    assert(projectionState.research.enabled); // Does not change the current snapshot.
+    context.registers.eax=0;
+    assert(DispatchPreview(3,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(!projectionState.research.enabled && !projectionState.research.superadminSourceCount);
+    const auto researchCorrections=projectionState.research.heroCorrectionCount;
+    assert(DispatchPreview(10,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(projectionState.research.heroCorrectionCount==researchCorrections+1);
+    assert(!g_superadminEnabled && g_heroCorrectionCount==0 && g_actorInputCount==0);
+    projectionState.research.actorInputsFrozen=true;
+    const auto frozenSequence=projectionState.research.sequence;
+    g_actorInputCount=123;
+    assert(DispatchPreview(10,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(projectionState.research.heroCorrectionCount==researchCorrections+1 &&
+        projectionState.research.sequence==frozenSequence && g_actorInputCount==123);
+    g_actorInputCount=0;
+    // Scripted ordinary encounters retain their lifetime, not hidden portraits.
+    memset(&projectionState,0,sizeof(projectionState));
+    context.registers.savedEsp=reinterpret_cast<uint32_t>(scriptedFrame)-4;
+    assert(DispatchPreview(14,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(projectionState.attackGeneration==1 && projectionState.publicCount==0);
+    assert(!projectionState.research.enabled && projectionState.research.superadminSourceCount==2);
+    assert(projectionState.publicTypes[0]==0 && g_superadminSourceCount==0 && g_actorInputCount==0);
+    assert(DispatchPreview(8,reinterpret_cast<uint32_t>(&context),&state,sizeof(state),&result));
+    assert(factsOnly.playerGeneration==1 && factsOnly.playerFrozen==1 && factsOnly.playerForecastCount==0);
+    printf("Capture layout: bytes=%u actors=%u actorCount=%u corrections=%u correctionCount=%u auxiliary=%u auxiliaryCount=%u cores=%u coreMask=%u policy=%u\n",
+        unsigned(sizeof(PreviewInputCapture)),unsigned(offsetof(PreviewInputCapture,actors)),
+        unsigned(offsetof(PreviewInputCapture,actorCount)),unsigned(offsetof(PreviewInputCapture,heroCorrections)),
+        unsigned(offsetof(PreviewInputCapture,heroCorrectionCount)),unsigned(offsetof(PreviewInputCapture,auxiliaryInputs)),
+        unsigned(offsetof(PreviewInputCapture,auxiliaryCount)),unsigned(offsetof(PreviewInputCapture,coreAggregates)),
+        unsigned(offsetof(PreviewInputCapture,coreMask)),unsigned(PolicyVerificationOffset));
+    printf("Research layout: offset=%u bytes=%u enabled=%u actors=%u actorCount=%u actorFrozen=%u sourceCount=%u sourceTypes=%u sourceCounts=%u coreMask=%u strategy=%u composition=%u areaCount=%u sequence=%u\n",
+        unsigned(offsetof(PublicProjectionState,research)),unsigned(sizeof(PreciseResearchState)),
+        unsigned(offsetof(PreciseResearchState,enabled)),unsigned(offsetof(PreciseResearchState,actorInputs)),
+        unsigned(offsetof(PreciseResearchState,actorInputCount)),unsigned(offsetof(PreciseResearchState,actorInputsFrozen)),
+        unsigned(offsetof(PreciseResearchState,superadminSourceCount)),unsigned(offsetof(PreciseResearchState,superadminSourceTypes)),
+        unsigned(offsetof(PreciseResearchState,superadminSourceCounts)),unsigned(offsetof(PreciseResearchState,actorCoreMask)),
+        unsigned(offsetof(PreciseResearchState,strategyTrace)),unsigned(offsetof(PreciseResearchState,sourceComposition)),
+        unsigned(offsetof(PreciseResearchState,areaInputCount)),unsigned(offsetof(PreciseResearchState,sequence)));
+    auto* migrationBytes = static_cast<unsigned char*>(VirtualAlloc(nullptr, heroes5_sdk::ContextCapacity, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE));
+    assert(migrationBytes);
+    auto migrationContext = context;migrationContext.residentData = migrationBytes;
+    auto& previousCapture = *reinterpret_cast<PreviewInputCapture*>(migrationBytes+8192);
+    previousCapture.version=6;previousCapture.generation=91;
+    auto& previousPublic = *reinterpret_cast<PublicProjectionState*>(migrationBytes+192*1024);
+    auto* permanentMethods=reinterpret_cast<uint32_t*>(migrationBytes+DetailsNativeMethodsOffset);
+    memcpy(permanentMethods,h5::hooks::DetailsRotatorMethods,64);
+    permanentMethods[5]=h5::hooks::DetailsRotationAvailable.address;
+    memset(&previousPublic,0xa5,offsetof(PublicProjectionState,research));
+    previousPublic.version=1;previousPublic.publicCount=7;previousPublic.uiVersion=5;previousPublic.detailsRotatorOwned=0;
+    assert(!EnsurePreviewStorage(migrationContext) && previousCapture.version==6 && previousCapture.generation==91);
+    previousPublic.uiVersion=4;
+    unsigned char preservedPrefix[offsetof(PublicProjectionState,research)];
+    memcpy(preservedPrefix,&previousPublic,sizeof(preservedPrefix));
+    assert(EnsurePreviewStorage(migrationContext));
+    assert(g_detailsNativeMethods==permanentMethods+1);
+    const auto& migratedPublic = *reinterpret_cast<const PublicProjectionState*>(migrationBytes+PublicProjectionOffset);
+    assert(memcmp(preservedPrefix,&migratedPublic,sizeof(preservedPrefix))==0);
+    assert(previousCapture.version==7 && previousCapture.generation==91 && previousCapture.sequence==2);
+    assert(!previousCapture.actorCount && !previousCapture.heroCorrectionCount && !previousCapture.auxiliaryCount);
+    assert(!migratedPublic.research.version && !migratedPublic.research.enabled);
+    assert(EnsurePreviewStorage(migrationContext));
+    assert(g_detailsNativeMethods==permanentMethods+1);
+    permanentMethods[6]^=1;
+    assert(EnsurePreviewStorage(migrationContext) && !g_detailsNativeMethods);
+    assert(permanentMethods[6]==(h5::hooks::DetailsRotatorMethods[6]^1));
+    assert(VirtualFree(migrationBytes,0,MEM_RELEASE));
+    printf("Policy layout: bytes=%u contexts=%u armyCounts=%u callCounts=%u calls=%u policyContexts=%u interval=%u inputCounts=%u capacity=%u callCapacity=%u postStart=%u public=%u publicBytes=%u\n",
+        unsigned(sizeof(PolicyVerification)),unsigned(offsetof(PolicyVerification,capabilityContexts)),
+        unsigned(offsetof(PolicyVerification,capabilityArmyCounts)),unsigned(offsetof(PolicyVerification,capabilityCallCount)),
+        unsigned(offsetof(PolicyVerification,capabilityCalls)),unsigned(offsetof(PolicyVerification,policyCallContexts)),
+        unsigned(offsetof(PolicyVerification,intervalVersion)),unsigned(offsetof(PolicyVerification,capturedInputCounts)),
+        unsigned(PolicyObservationCapacity),unsigned(CapabilityCallCapacity),unsigned(PostStartVerificationOffset),
+        unsigned(PublicProjectionOffset),unsigned(sizeof(PublicProjectionState)));
+    assert(VirtualFree(resident, 0, MEM_RELEASE));
+    return 0;
+}
+'''.replace('MANAGED_SOURCE', source)
+        with tempfile.TemporaryDirectory(prefix='workshop-managed-capture-') as directory:
+            temporary = Path(directory)
+            # Substitute only pinned native calls in the isolated executable.
+            # Reserve fixture pages away from the host image/low-address heaps.
+            native_boundaries = {
+                '0x89fbf0': '0x2001fbf0', '0x54e440': '0x2002e440',
+                '0x576b40': '0x20036b40', '0x8c6150': '0x20046150', '0x8c61d0': '0x200461d0',
+                '0x669e10': '0x20059e10',
+                '0x4ba880': '0x2006a880',
+                '0x4bdad0': '0x2007dad0', '0x4c7430': '0x20087430',
+            }
+            fixture_plugin = (MOD_ROOT / 'src/preview_plugin.cpp').read_text(encoding='utf-8')
+            for native, boundary in native_boundaries.items():
+                fixture_plugin = fixture_plugin.replace(native, boundary)
+                driver = driver.replace(native, boundary)
+            for original, boundary in {'0x890000': '0x20010000', '0x540000': '0x20020000',
+                                       '0x570000': '0x20030000', '0x8c0000': '0x20040000',
+                                       '0x4b0000': '0x20060000'}.items():
+                driver = driver.replace(original, boundary)
+            fixture_adapter = Path(source).read_text(encoding='utf-8')
+            fixture_actor = (MOD_ROOT / 'game-api/include/h5/actor_input.hpp').read_text(encoding='utf-8')
+            for native, boundary in native_boundaries.items():
+                fixture_actor = fixture_actor.replace(native, boundary)
+            fixture_actor = fixture_actor.replace('"hooks.hpp"', '"' + (MOD_ROOT / 'game-api/include/h5/hooks.hpp').as_posix() + '"')
+            (temporary / 'actor_input.hpp').write_text(fixture_actor, encoding='utf-8')
+            fixture_calculations = (MOD_ROOT / 'src/placement_calculations.hpp').read_text(encoding='utf-8')
+            fixture_calculations = fixture_calculations.replace('../game-api/include/h5/actor_input.hpp',
+                (temporary / 'actor_input.hpp').as_posix())
+            (temporary / 'placement_calculations.hpp').write_text(fixture_calculations, encoding='utf-8')
+            for header in ('hooks.hpp', 'actor_input.hpp'):
+                include = '../game-api/include/h5/' + header
+                absolute = (MOD_ROOT / 'game-api/include/h5' / header).as_posix()
+                if header == 'actor_input.hpp': absolute = (temporary / 'actor_input.hpp').as_posix()
+                fixture_adapter = fixture_adapter.replace(include, absolute)
+                fixture_plugin = fixture_plugin.replace(include, absolute)
+            (temporary / 'preview_plugin.cpp').write_text(fixture_plugin, encoding='utf-8')
+            (temporary / 'preview_sdk.cpp').write_text(fixture_adapter, encoding='utf-8')
+            driver = driver.replace(source, (temporary / 'preview_sdk.cpp').as_posix())
+            (temporary / 'capture.cpp').write_text(driver, encoding='utf-8')
+            (temporary / 'build.cmd').write_text(
+                f'@call "{vcvarsall()}" x86 >nul\n@if errorlevel 1 exit /b 1\n'
+                f'@cl /nologo /EHsc /O2 /std:c++20 /I"{DEVKIT / "native"}" /I"{MOD_ROOT / "src"}" /Fe:capture.exe capture.cpp user32.lib /link /BASE:0x10000000 /DYNAMICBASE:NO /FIXED\n',
+                encoding='utf-8')
+            build = subprocess.run(['cmd', '/d', '/c', str(temporary / 'build.cmd')],
+                                   cwd=temporary, capture_output=True)
+            self.assertEqual(build.returncode, 0, build.stdout.decode(errors='replace') + build.stderr.decode(errors='replace'))
+            result = subprocess.run([str(temporary / 'capture.exe')], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout.decode(errors='replace') + result.stderr.decode(errors='replace'))
+            layout_report = os.environ.get('H5_PREVIEW_LAYOUT_REPORT')
+            if layout_report:
+                layouts = {}
+                for line in result.stdout.decode().splitlines():
+                    if line.startswith(('Research layout:', 'Capture layout:', 'Policy layout:')):
+                        label, values = line.split(' layout: ', 1)
+                        layouts[label.lower()] = {key: int(value) for key, value in
+                                                 (entry.split('=') for entry in values.split())}
+                assert len(layouts) == 3
+                Path(layout_report).write_text(json.dumps(layouts, indent=2)+'\n', encoding='utf-8')
+            runtime_driver = r'''
+#include <cassert>
+#include "plugin_runtime.hpp"
+int wmain(int count, wchar_t** arguments) {
+    if (count != 2) { return 1; }
+    heroes5_sdk::PluginRuntime runtime;
+    if (runtime.Replace(arguments[1]) != heroes5_sdk::RuntimeResult::Ok) { return 2; }
+    if (runtime.HookSettings().count != 15) { return 3; }
+    uint32_t result = 0;
+    if (runtime.Invoke(19, 1, result) != heroes5_sdk::RuntimeResult::CallRejected) { return 4; }
+    if (runtime.Invoke(20, 1, result) != heroes5_sdk::RuntimeResult::CallRejected) { return 6; }
+    if (runtime.Invoke(21, 1, result) != heroes5_sdk::RuntimeResult::CallRejected) { return 7; }
+    for (uint32_t command=22;command<=29;++command) {
+        if (runtime.Invoke(command,1,result)!=heroes5_sdk::RuntimeResult::CallRejected) { return 8; }
+    }
+    if (runtime.Invoke(0, 0, result) != heroes5_sdk::RuntimeResult::Ok || result != 1) { return 5; }
+    return 0;
+}
+'''
+            (temporary / 'runtime.cpp').write_text(runtime_driver, encoding='utf-8')
+            (temporary / 'runtime-build.cmd').write_text(
+                f'@call "{vcvarsall()}" x86 >nul\n@if errorlevel 1 exit /b 1\n'
+                f'@cl /nologo /EHsc /O2 /std:c++20 /I"{DEVKIT / "native"}" /LD /Fe:preview.dll "{source}" user32.lib\n'
+                '@if errorlevel 1 exit /b 1\n'
+                f'@cl /nologo /EHsc /O2 /std:c++20 /I"{DEVKIT / "native"}" /Fe:runtime.exe runtime.cpp\n',
+                encoding='utf-8')
+            build = subprocess.run(['cmd', '/d', '/c', str(temporary / 'runtime-build.cmd')],
+                                   cwd=temporary, capture_output=True)
+            self.assertEqual(build.returncode, 0, build.stdout.decode(errors='replace') + build.stderr.decode(errors='replace'))
+            result = subprocess.run([str(temporary / 'runtime.exe'), str(temporary / 'preview.dll')], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout.decode(errors='replace') + result.stderr.decode(errors='replace'))
+
     def test_forced_cleanup_refuses_missing_or_reused_creation_identity(self):
         import ast
         import ctypes
@@ -361,7 +1733,7 @@ class NativeTests(unittest.TestCase):
     def test_owned_physical_area_power_matches_original_shot_and_melee_branches(self):
         import pefile, itertools
         from unicorn.x86_const import UC_X86_REG_FPCW
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         calculation = 'int CalculateAreaPhysicalPower(' + source.split('int CalculateAreaPhysicalPower(', 1)[1].split(
             '// Initial-state arithmetic', 1)[0]
         driver = r'''
@@ -862,7 +2234,7 @@ int main() {
     def test_owned_area_spell_power_matches_original_four_and_ten_turn_paths(self):
         import pefile
         from unicorn import UC_HOOK_CODE
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         calculation = 'struct AreaSpellInput {' + source.split('struct AreaSpellInput {', 1)[1].split(
             '// Initial-state arithmetic', 1)[0]
         driver = r'''
@@ -980,7 +2352,7 @@ int main() {
     def test_owned_spread_denominator_matches_original_power_and_conditional_extra(self):
         import pefile
         from unicorn.x86_const import UC_X86_REG_FPCW
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         aggregate = 'struct PlacementAggregate {' + source.split('struct PlacementAggregate {', 1)[1].split(
             'struct BaselineActionFactorInput {', 1)[0]
         calculation = 'int CalculatePlacementPower(' + source.split('int CalculatePlacementPower(', 1)[1].split(
@@ -1005,8 +2377,11 @@ int main() {
         const int ranged = CalculatePlacementPower(own, enemy, increase, decrease, true);
         uint16_t after;
         __asm fnstcw after
+        const int defensiveTotal = CalculateDefensivePower(own, enemy, increase, decrease, false);
+        const int defensiveRanged = CalculateDefensivePower(own, enemy, increase, decrease, true);
+        __asm fnstcw after
         __asm fldcw original
-        std::cout << total << ' ' << ranged << ' ' << after << '\n';
+        std::cout << total << ' ' << ranged << ' ' << defensiveTotal << ' ' << defensiveRanged << ' ' << after << '\n';
     }
 }
 '''.replace('AGGREGATE', aggregate).replace('CALCULATION', calculation)
@@ -1026,7 +2401,7 @@ int main() {
             pair = []
             for side in range(2):
                 damage = generator.choice((0, 1, 40, 50, 9999, 2147483))
-                words = [generator.randrange(40), generator.randrange(100), 0, damage,
+                words = [generator.randrange(40), generator.randrange(100), generator.randrange(50), damage,
                          bits(generator.choice((-2.5, 0, 4.525, 6.2, 50.99999))),
                          bits(generator.choice((0, 1, 1.147644, 1.486641, 3.5))),
                          100, bits(7.5), 100,
@@ -1038,6 +2413,11 @@ int main() {
                          generator.randrange(40), 0]
                 pair.append(words)
             pairs.append(pair)
+        # Defensive total refuses negative/oversized subtotals before adding magic.
+        for fixed_extra in (0x70000000, 0x70000001, 0x80000000, 0xffffffff):
+            first = [fixed_extra, 0, 0, 0, bits(1), bits(1), 0, bits(1), 0, bits(1),
+                     bits(0), bits(1), bits(0), bits(1), bits(0), bits(1), 3, 0]
+            pairs.append([first, list(first)])
         report = WORKSPACE / '.local/test-state/accuracy-campaign-20261003T074143Z-9312-rmg_b-admin.json'
         if report.exists():
             for run in json.loads(report.read_text(encoding='utf-8'))['runs']:
@@ -1052,7 +2432,7 @@ int main() {
                 cpu.mem_write(own, struct.pack('<18I', *pair[0]))
                 cpu.mem_write(enemy, struct.pack('<18I', *pair[1]))
                 results = []
-                for entry in (0xbfa1b0, 0xbf9cc0):
+                for entry in (0xbfa1b0, 0xbf9cc0, 0xbfc4a0, 0xbf9d30):
                     cpu.mem_write(stack, struct.pack('<2I', stop, enemy))
                     cpu.reg_write(UC_X86_REG_ESP, stack)
                     cpu.reg_write(UC_X86_REG_ECX, own)
@@ -1073,12 +2453,14 @@ int main() {
             completed = subprocess.run([str(folder / 'power.exe')], input='\n'.join(payload) + '\n', capture_output=True, text=True)
             self.assertEqual(completed.returncode, 0, completed.stderr)
             actual = [list(map(int, row.split())) for row in completed.stdout.splitlines()]
-            self.assertEqual(actual, expected)
+            for index, (ours, native) in enumerate(zip(actual, expected)):
+                self.assertEqual(ours, native, f"case={index} input={payload[index]}")
+            self.assertEqual(len(actual), len(expected))
 
     def test_special_damage_category_matches_original_flags_and_exclusion_priority(self):
         import pefile,itertools
         from unicorn import UC_HOOK_CODE
-        text=(MOD_ROOT/'src/preview_plugin.cpp').read_text()
+        text=preview_source()
         calculation='unsigned SelectPlacementDamageCategory(' + text.split('unsigned SelectPlacementDamageCategory(',1)[1].split('// category:',1)[0]
         pe=pefile.PE(str(WORKSPACE/'.local/test-game/bin/H5_Game.exe'));base=pe.OPTIONAL_HEADER.ImageBase
         cpu=Uc(UC_ARCH_X86,UC_MODE_32);cpu.mem_map(base,(pe.OPTIONAL_HEADER.SizeOfImage+4095)&~4095)
@@ -1122,7 +2504,7 @@ int main() {
     def test_split_simple_cells_match_original_whole_uniform_placement(self):
         import pefile,itertools
         from unicorn import UC_HOOK_CODE
-        text=(MOD_ROOT/'src/preview_plugin.cpp').read_text()
+        text=preview_source()
         calculation='int ChooseSourceSimpleCell() {'+text.split('int ChooseSourceSimpleCell() {',1)[1].split('bool FinalizeSourceSimplePlan(',1)[0]
         driver=r'''
 #include <cstdint>
@@ -1207,7 +2589,7 @@ int main() {
             self.assertEqual([list(map(int,line.split())) for line in result.stdout.splitlines()],expected)
 
     def test_source_simple_selector_uses_fallback_cache_after_partial_failure(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text(encoding='utf-8')
+        source = preview_source()
         implementation = 'bool CalculateSourceFallbackCells(' + source.split('bool CalculateSourceFallbackCells(', 1)[1].split('bool __fastcall PublicPlacementPairBefore(', 1)[0]
         driver = r'''
 #include <cstdint>
@@ -1279,7 +2661,7 @@ int main() {
     def test_source_fallback_matches_native_mixed_column_passes(self):
         import pefile, random
         from unicorn import UC_HOOK_CODE
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text(encoding='utf-8')
+        source = preview_source()
         implementation = 'bool CalculateSourceFallbackCells(' + source.split('bool CalculateSourceFallbackCells(', 1)[1].split('int ChooseSourceFallbackCell()', 1)[0]
         driver = r'''
 #include <cstdint>
@@ -1403,11 +2785,412 @@ int main() {
                           for index in range(3)], [(13, 2), (13, 1), (12, 1)])
         executable.close()
 
+    def test_reference_geometry_entry_preserves_visible_model_ownership(self):
+        from unicorn import UC_HOOK_CODE
+        source = preview_source()
+        assembly = 'source_ready:' + source.split('    source_ready:', 1)[1].split(
+            '        mov eax, dword ptr [esp + 44]', 1)[0]
+        assembly += '\nresume: jmp 0x306000'
+        assembly = '\n'.join(line.split('//', 1)[0] for line in assembly.splitlines())
+        assembly = re.sub(r'offset g_outputStorage((?: \+ \d+)*)',
+                          lambda match: hex(0x303000 + sum(map(int, re.findall(r'\d+', match[1])))), assembly)
+        symbols = {'g_outputStorage': '0x303000', 'g_publicCount': '0x302000',
+                   'g_superadminEnabled': '0x302004', 'g_placementGeneration': '0x302008',
+                   'g_renderedGeneration': '0x30200c', 'g_renderCalls': '0x302010'}
+        for symbol, address in symbols.items():
+            assembly = assembly.replace(symbol, address)
+        code = bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(assembly, 0x300000)[0])
+        for geometry_only in (False, True):
+            with self.subTest(geometry_only=geometry_only):
+                machine = Uc(UC_ARCH_X86, UC_MODE_32)
+                machine.mem_map(0x300000, 65536)
+                machine.mem_map(0x576000, 4096)
+                machine.mem_write(0x300000, code)
+                machine.mem_write(0x302000, struct.pack('<5I', 2, 1, 17, 16, 6))
+                machine.mem_write(0x303008 + 1364, struct.pack('<I', geometry_only))
+                machine.mem_write(0x303008 + 728, struct.pack('<I', 1234))
+                machine.reg_write(UC_X86_REG_EDI, 5678)
+                machine.reg_write(UC_X86_REG_ESP, 0x30f000)
+                releases = []
+
+                def boundary(emulator, address, size, unused):
+                    if address == 0x306000:
+                        emulator.emu_stop()
+                    elif address == 0x576b40:
+                        releases.append(emulator.reg_read(UC_X86_REG_ECX))
+                        stack = emulator.reg_read(UC_X86_REG_ESP)
+                        destination = struct.unpack('<I', emulator.mem_read(stack, 4))[0]
+                        emulator.reg_write(UC_X86_REG_ESP, stack + 4)
+                        emulator.reg_write(UC_X86_REG_EIP, destination)
+
+                machine.hook_add(UC_HOOK_CODE, boundary)
+                machine.emu_start(0x300000, 0x306000, count=1000)
+                self.assertEqual(len(releases), 0 if geometry_only else 7)
+                self.assertEqual(struct.unpack('<2I', machine.mem_read(0x30200c, 8)),
+                                 (16, 6) if geometry_only else (17, 7))
+                self.assertEqual(struct.unpack('<I', machine.mem_read(0x303008 + 728, 4))[0],
+                                 1234 if geometry_only else 5678)
+                self.assertEqual(struct.unpack('<4I', machine.mem_read(0x303008 + 976, 16)), (1, 17, 0, 0))
+
+    def test_rendered_slot_identity_is_retained_in_direct_and_planned_paths(self):
+        source = preview_source()
+        assembly = 'cell_selected:' + source.split('    cell_selected:', 1)[1].split('    decision_record_ready:', 1)[0]
+        assembly += '\ndecision_record_ready: jmp 0x306000'
+        assembly = '\n'.join(line.split('//', 1)[0] for line in assembly.splitlines())
+        assembly = re.sub(r'offset g_outputStorage((?: \+ \d+)*)',
+            lambda match: hex(0x303000 + sum(map(int, re.findall(r'\d+', match[1])))), assembly)
+        symbols = {'g_outputStorage': '0x303000', 'g_cell': '0x305000',
+            'g_projectionPlanning': '0x302000', 'g_definitionMaximum': '0x302004',
+            'g_creatureDefinition': '0x302008', 'g_candidateIdentity': '0x30200c',
+            'g_predictedDefensive': '0x302010', 'g_useSpreadRows': '0x302011'}
+        for symbol, address in symbols.items():
+            assembly = assembly.replace(symbol, address)
+        code = bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(assembly, 0x300000)[0])
+        for planned in (False, True):
+            with self.subTest(planned=planned):
+                machine = Uc(UC_ARCH_X86, UC_MODE_32)
+                machine.mem_map(0x300000, 65536)
+                machine.mem_write(0x300000, code)
+                machine.mem_write(0x302000, struct.pack('<4I2B', planned, 5, 2, 1, 0, 1))
+                machine.mem_write(0x303008 + 496, struct.pack('<I', 2))
+                machine.mem_write(0x303008 + 1368, b'\xff' * 28)
+                machine.reg_write(UC_X86_REG_ESP, 0x308000)
+                machine.reg_write(UC_X86_REG_EDX, 0x305010)
+                machine.reg_write(UC_X86_REG_ESI, 13)
+                machine.reg_write(UC_X86_REG_EDI, 2)
+                machine.emu_start(0x300000, 0x306000, count=1000)
+                self.assertEqual(struct.unpack('<I', machine.mem_read(0x303008 + 1376, 4))[0], 5)
+                self.assertEqual(struct.unpack('<I', machine.mem_read(0x303008 + 984, 4))[0], 3 if planned else 0)
+                self.assertEqual(machine.reg_read(UC_X86_REG_ESP), 0x308000)
+                self.assertEqual(machine.reg_read(UC_X86_REG_EDX), 0x305010)
+
+    def test_exhausted_spread_keeps_stack_for_native_residual_column_pass(self):
+        import pefile
+        from unicorn import UC_HOOK_CODE
+        game = WORKSPACE / '.local/test-game/bin/H5_Game.exe'
+        self.assertEqual(hashlib.sha256(game.read_bytes()).hexdigest(), probe.HASHES['H5_Game.exe'])
+        executable = pefile.PE(str(game))
+        machine = Uc(UC_ARCH_X86, UC_MODE_32)
+        machine.mem_map(executable.OPTIONAL_HEADER.ImageBase,
+                        (executable.OPTIONAL_HEADER.SizeOfImage + 4095) & ~4095)
+        machine.mem_write(executable.OPTIONAL_HEADER.ImageBase, executable.get_memory_mapped_image())
+        machine.mem_map(0x2000000, 65536)
+        context, table, cells, vector, record = 0x2001000, 0x2002000, 0x2003000, 0x2004000, 0x2005000
+        pending, candidates, candidate_vector = 0x2006000, 0x2007000, 0x2007100
+        stack, stop, definition = 0x2008000, 0x2009000, 0x200a000
+        machine.mem_write(context + 8, struct.pack('<3I', table, 2, 10))
+        machine.mem_write(context + 0x18, struct.pack('<2I', 16, 12))
+        machine.mem_write(context + 0x34, struct.pack('<I', vector))
+        machine.mem_write(context + 0xf0, struct.pack('<I', vector))
+        machine.mem_write(vector, struct.pack('<3I', record, record + 36, record + 36))
+        machine.mem_write(record + 0x1c, struct.pack('<I', 1))
+        machine.mem_write(definition + 0xdc, struct.pack('<I', 1))
+        # Generation1194, immediately before Peasant40: six earlier stacks.
+        occupied = {(13, 1), (13, 2), (12, 3), (13, 3), (12, 4), (13, 4),
+                    (13, 6), (12, 10), (12, 5)}
+        for row in range(10):
+            machine.mem_write(table + row * 4, struct.pack('<I', cells + row * 2))
+            machine.mem_write(cells + row * 2, bytes(int((13-column, row+1) in occupied)
+                                                     for column in range(2)))
+        machine.mem_write(pending, struct.pack('<3I', pending + 16, pending + 20, pending + 20))
+        machine.mem_write(pending + 16, struct.pack('<I', record))
+        machine.mem_write(candidates, struct.pack('<4I', 1, 4, 1, 9))
+        machine.mem_write(candidate_vector, struct.pack('<3I', candidates, candidates + 16, candidates + 16))
+
+        def primitive_boundary(emulator, address, size, unused):
+            argument_bytes = 0
+            if address == 0x89fbf0:
+                emulator.reg_write(UC_X86_REG_EAX, definition)
+            elif address == 0x4d89f0:
+                emulator.reg_write(UC_X86_REG_EAX, 0)  # Peasant has no physical shot.
+            elif address == 0x858ba0:
+                argument_bytes = 4  # Existing record-copy boundary.
+            else:
+                return
+            pointer = emulator.reg_read(UC_X86_REG_ESP)
+            destination = struct.unpack('<I', emulator.mem_read(pointer, 4))[0]
+            emulator.reg_write(UC_X86_REG_ESP, pointer + 4 + argument_bytes)
+            emulator.reg_write(UC_X86_REG_EIP, destination)
+
+        machine.hook_add(UC_HOOK_CODE, primitive_boundary)
+        machine.mem_write(stack, struct.pack('<3I', stop, pending, candidate_vector))
+        machine.reg_write(UC_X86_REG_ESP, stack)
+        machine.reg_write(UC_X86_REG_ECX, context)
+        machine.emu_start(0x857880, stop, count=50000)
+        self.assertEqual(machine.mem_read(record + 16, 1)[0], 0,
+                         'Exhausted selected rows must leave the record unplaced')
+        # Extended dispatcher8598e0 visits column0 before column1, unlike the
+        # independent simple-layout fallback859930.
+        machine.mem_write(stack, struct.pack('<4I', stop, vector, 0, 0))
+        machine.reg_write(UC_X86_REG_ESP, stack)
+        machine.reg_write(UC_X86_REG_ECX, context)
+        machine.emu_start(0x857780, stop, count=50000)
+        self.assertEqual(machine.mem_read(record + 16, 1)[0], 1)
+        self.assertEqual(struct.unpack('<2I', machine.mem_read(record + 20, 8)), (13, 5))
+        executable.close()
+
+        source = preview_source()
+        assembly = 'rank_done:' + source.split('    rank_done:', 1)[1].split('    rank_selected:', 1)[0]
+        assembly += '\nrank_selected: jmp 0x306000\nnext_model: jmp 0x306100\nrank_next: jmp 0x306200'
+        assembly = '\n'.join(line.split('//', 1)[0] for line in assembly.splitlines())
+        for symbol, address in {'g_outputStorage': '0x303000', 'g_useSpreadRows': '0x302000',
+                                'g_spreadFallback': '0x302001', 'g_superadminEnabled': '0x302002'}.items():
+            assembly = assembly.replace(symbol, address)
+        code = bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(assembly, 0x300000)[0])
+        for admin, destination in ((1, 0x306100), (0, 0x306200)):
+            with self.subTest(superadmin=admin):
+                translated = Uc(UC_ARCH_X86, UC_MODE_32)
+                translated.mem_map(0x300000, 65536)
+                translated.mem_write(0x300000, code)
+                translated.mem_write(0x302000, bytes((1, 0, admin)))
+                translated.mem_write(0x303008 + 744, struct.pack('<i', -1))
+                translated.hook_add(UC_HOOK_CODE, lambda emulator, address, size, unused:
+                                    emulator.emu_stop() if address in (0x306000, 0x306100, 0x306200) else None)
+                translated.emu_start(0x300000, destination, count=1000)
+                self.assertEqual(translated.reg_read(UC_X86_REG_EIP), destination)
+                self.assertEqual(translated.mem_read(0x302001, 1)[0], 0 if admin else 1)
+
+    def test_protective_placement_matches_original_candidates_and_footprints(self):
+        import pefile
+        import random
+        from unicorn import UC_HOOK_CODE
+        game = WORKSPACE / '.local/test-game/bin/H5_Game.exe'
+        self.assertEqual(hashlib.sha256(game.read_bytes()).hexdigest(), probe.HASHES['H5_Game.exe'])
+        executable = pefile.PE(str(game))
+        machine = Uc(UC_ARCH_X86, UC_MODE_32)
+        machine.mem_map(executable.OPTIONAL_HEADER.ImageBase,
+                        (executable.OPTIONAL_HEADER.SizeOfImage + 4095) & ~4095)
+        machine.mem_write(executable.OPTIONAL_HEADER.ImageBase, executable.get_memory_mapped_image())
+        machine.mem_map(0x2000000, 0x40000)
+        context, table, cells, pending, records = 0x2001000, 0x2002000, 0x2003000, 0x2004000, 0x2005000
+        weights, weight_values, pointers = 0x2006000, 0x2006100, 0x2006200
+        stack, stop = 0x2008000, 0x2009000
+        allocation = [0x2010000]
+        footprint = [1]
+
+        def primitive_boundary(emulator, address, size, unused):
+            if address not in (0x8791f0, 0x879240, 0x4d89d0):
+                return
+            pointer = emulator.reg_read(UC_X86_REG_ESP)
+            returned = struct.unpack('<I', emulator.mem_read(pointer, 4))[0]
+            if address == 0x8791f0:
+                length = struct.unpack('<I', emulator.mem_read(pointer + 4, 4))[0]
+                self.assertLess(allocation[0] + length, 0x2040000)
+                emulator.reg_write(UC_X86_REG_EAX, allocation[0])
+                allocation[0] += (length + 15) & ~15
+            elif address == 0x4d89d0:
+                emulator.reg_write(UC_X86_REG_EAX, footprint[0])
+            emulator.reg_write(UC_X86_REG_ESP, pointer + 4)
+            emulator.reg_write(UC_X86_REG_EIP, returned)
+
+        machine.hook_add(UC_HOOK_CODE, primitive_boundary)
+        cases, expected = [], []
+        generator = random.Random(1194)
+        for height in (8, 12):
+            rows = height - 2
+            masks = [0, (1 << (rows * 2)) - 1]
+            masks += [generator.getrandbits(rows * 2) for _ in range(14)]
+            for window in (0, rows - 1):
+                for window_length in (1, 3):
+                    selected = {(window + index) % rows for index in range(window_length)}
+                    row_weights = [2 if row in selected else 1 if row-1 in selected or row+1 in selected else 0
+                                   for row in range(rows)]
+                    for size in (1, 2):
+                        for count in (1, 3):
+                            for mask in masks:
+                                footprint[0] = size
+                                allocation[0] = 0x2010000
+                                machine.mem_write(context, bytes(512))
+                                machine.mem_write(context + 8, struct.pack('<3I', table, 2, rows))
+                                machine.mem_write(context + 0x18, struct.pack('<2I', 16, height))
+                                for row in range(rows):
+                                    machine.mem_write(table + row * 4, struct.pack('<I', cells + row * 2))
+                                    machine.mem_write(cells + row * 2, bytes((mask >> (row * 2 + column)) & 1
+                                                                          for column in range(2)))
+                                machine.mem_write(records, bytes(36 * count))
+                                machine.mem_write(pointers, struct.pack('<' + str(count) + 'I',
+                                                                       *(records + index * 36 for index in range(count))))
+                                machine.mem_write(pending, struct.pack('<3I', pointers, pointers + count * 4,
+                                                                      pointers + count * 4))
+                                machine.mem_write(weights, struct.pack('<I', weight_values))
+                                machine.mem_write(weight_values, struct.pack('<' + str(rows) + 'I', *row_weights))
+                                machine.mem_write(stack, struct.pack('<3I', stop, pending, weights))
+                                machine.reg_write(UC_X86_REG_ESP, stack)
+                                machine.reg_write(UC_X86_REG_ECX, context)
+                                machine.emu_start(0x857cc0, stop, count=200000)
+                                self.assertEqual(machine.reg_read(UC_X86_REG_EIP), stop)
+                                result = []
+                                for index in range(count):
+                                    placed = machine.mem_read(records + index * 36 + 16, 1)[0]
+                                    result.extend(struct.unpack('<2i', machine.mem_read(records + index * 36 + 20, 8))
+                                                  if placed else (-1, -1))
+                                cases.append((height, window, window_length, size, count, mask))
+                                expected.append(result)
+        executable.close()
+        source = preview_source()
+        implementation = 'void PrepareProtectiveCandidates() {' + source.split('void PrepareProtectiveCandidates() {', 1)[1].split(
+            'bool PlacementHasPhysicalShot(uint32_t type) {', 1)[0]
+        driver = r'''
+#include <cstdint>
+#include <cstring>
+#include <iostream>
+int g_protectiveCellCount=0, g_protectiveCells[120]{};
+unsigned char g_outputStorage[4104]{};
+bool g_superadminEnabled=true;
+void* g_creatureDefinition=nullptr;
+''' + implementation + r'''
+int main() {
+    int height,window,length,size,count; uint32_t mask;
+    while(std::cin>>height>>window>>length>>size>>count>>mask) {
+        memset(g_outputStorage,0,sizeof(g_outputStorage));
+        *reinterpret_cast<int*>(g_outputStorage+8+384)=16;
+        *reinterpret_cast<int*>(g_outputStorage+8+388)=height;
+        *reinterpret_cast<int*>(g_outputStorage+8+524)=2;
+        *reinterpret_cast<int*>(g_outputStorage+8+784)=window;
+        *reinterpret_cast<int*>(g_outputStorage+8+796)=length;
+        for(int row=0;row<height-2;++row)for(int column=0;column<2;++column) {
+            const int x=13-column;
+            if(mask&(1u<<(row*2+column)))g_outputStorage[8+1536+(row+1)*2+x/8]|=1<<(x&7);
+        }
+        g_creatureDefinition=reinterpret_cast<void*>(size);
+        PrepareProtectiveCandidates();
+        for(int index=0;index<count;++index) {
+            const int cell=ChooseProtectiveCell();
+            if(cell<0) { std::cout<<"-1 -1 "; continue; }
+            const int x=cell>>8,y=cell&255;
+            std::cout<<x<<' '<<y<<' ';
+            for(int row=y-size+1;row<=y;++row)for(int column=x-size+1;column<=x;++column)
+                g_outputStorage[8+1536+row*2+column/8]|=1<<(column&7);
+        }
+        std::cout<<'\n';
+    }
+}
+'''
+        with tempfile.TemporaryDirectory(prefix='workshop-protective-oracle-') as directory:
+            folder = Path(directory)
+            (folder / 'protective.cpp').write_text(driver, encoding='utf-8')
+            (folder / 'build.cmd').write_text(f'@call "{vcvarsall()}" x86 >nul\n@if errorlevel 1 exit /b 1\n'
+                                             '@cl /nologo /EHsc /O2 /std:c++20 /Fe:protective.exe protective.cpp\n', encoding='utf-8')
+            built = subprocess.run(['cmd', '/d', '/c', str(folder / 'build.cmd')], cwd=folder, capture_output=True)
+            self.assertEqual(built.returncode, 0, built.stdout.decode(errors='replace') + built.stderr.decode(errors='replace'))
+            completed = subprocess.run([str(folder / 'protective.exe')], input='\n'.join(' '.join(map(str, case)) for case in cases),
+                                       text=True, capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            actual = [list(map(int, line.split())) for line in completed.stdout.splitlines()]
+            self.assertEqual(len(actual), len(expected))
+            for case, own, native in zip(cases, actual, expected):
+                with self.subTest(height=case[0], window=case[1], length=case[2], footprint=case[3], count=case[4], mask=case[5]):
+                    self.assertEqual(own, native)
+
+    def test_runic_contribution_matches_original_descriptor_states(self):
+        import itertools
+        import pefile
+        from unicorn import UC_HOOK_CODE
+        from unicorn.x86_const import UC_X86_REG_FPCW
+        game = WORKSPACE / '.local/test-game/bin/H5_Game.exe'
+        self.assertEqual(hashlib.sha256(game.read_bytes()).hexdigest(), probe.HASHES['H5_Game.exe'])
+        executable = pefile.PE(str(game))
+        machine = Uc(UC_ARCH_X86, UC_MODE_32)
+        machine.mem_map(executable.OPTIONAL_HEADER.ImageBase,
+                        (executable.OPTIONAL_HEADER.SizeOfImage + 4095) & ~4095)
+        machine.mem_write(executable.OPTIONAL_HEADER.ImageBase, executable.get_memory_mapped_image())
+        machine.mem_map(0x2000000, 65536)
+        actor, methods, vector, descriptors = 0x2001000, 0x2002000, 0x2003000, 0x2005000
+        stack, stop, output, definitions = 0x2008000, 0x2009000, 0x200c000, 0x200d000
+        machine.mem_write(actor, struct.pack('<I', methods))
+        machine.mem_write(methods + 0x248, struct.pack('<I', 0x200a000))
+        machine.mem_write(0x200a000, b'\xb8' + struct.pack('<I', vector) + b'\xc3')
+        machine.mem_write(stop, b'\xd9\x1d' + struct.pack('<I', output))
+
+        def primitive_boundary(emulator, address, size, unused):
+            if address not in (0x41a5c0, 0x41a570, 0x879240, 0x41a040, 0x8496a0):
+                return
+            pointer = emulator.reg_read(UC_X86_REG_ESP)
+            returned = struct.unpack('<I', emulator.mem_read(pointer, 4))[0]
+            arguments = 0
+            if address == 0x41a5c0:
+                # Descriptor-vector copy is a lifetime boundary, not scoring.
+                source = struct.unpack('<I', emulator.mem_read(pointer + 4, 4))[0]
+                destination = emulator.reg_read(UC_X86_REG_ECX)
+                emulator.mem_write(destination, bytes(emulator.mem_read(source, 12)))
+                emulator.reg_write(UC_X86_REG_EAX, destination)
+                arguments = 4
+            elif address == 0x41a040:
+                descriptor = emulator.reg_read(UC_X86_REG_ECX)
+                state = struct.unpack('<I', emulator.mem_read(descriptor + 8, 4))[0]
+                emulator.reg_write(UC_X86_REG_EAX, state)
+            elif address == 0x8496a0:
+                spell = emulator.reg_read(UC_X86_REG_ECX)
+                emulator.reg_write(UC_X86_REG_EAX, definitions + (spell - 1) * 256)
+            emulator.reg_write(UC_X86_REG_ESP, pointer + 4 + arguments)
+            emulator.reg_write(UC_X86_REG_EIP, returned)
+
+        machine.hook_add(UC_HOOK_CODE, primitive_boundary)
+        properties = ((5, 0), (5, 1), (5, 2), (5, 3), (0, 0), (6, 0))
+        combinations = [items for count in range(4) for items in itertools.product(properties, repeat=count)]
+        combinations += [((5,0),(5,1),(5,2),(5,3)), ((0,0),(6,0),(5,3),(5,1)), ((5,3),)*4]
+        payload, expected = [], []
+        for control in (0x037f, 0x0c7f):
+            for items in combinations:
+                machine.mem_write(vector, struct.pack('<3I', descriptors, descriptors + len(items) * 20,
+                                                      descriptors + len(items) * 20))
+                for index, (school, state) in enumerate(items):
+                    machine.mem_write(descriptors + index * 20, struct.pack('<5I', 0, index + 1, state, 0, 0))
+                    machine.mem_write(definitions + index * 256 + 0x88, struct.pack('<I', school))
+                machine.mem_write(stack, struct.pack('<I', stop))
+                machine.reg_write(UC_X86_REG_ESP, stack)
+                machine.reg_write(UC_X86_REG_ECX, actor)
+                machine.reg_write(UC_X86_REG_FPCW, control)
+                machine.emu_start(0xbfb3d0, stop + 6, count=20000)
+                self.assertEqual(machine.reg_read(UC_X86_REG_ESP), stack + 4)
+                expected.append(struct.unpack('<I', machine.mem_read(output, 4))[0])
+                payload.append(' '.join(map(str, (control, len(items), *(value for item in items for value in item)))))
+        executable.close()
+        header = (MOD_ROOT / 'src/placement_calculations.hpp').as_posix()
+        driver = r'''
+#include <windows.h>
+#include <cstdint>
+#include <cstring>
+#include <iostream>
+#include "HEADER"
+int main() {
+    uint32_t control,count;
+    while(std::cin>>control>>count) {
+        h5::army::ActorInput input{};input.aggregateIdentity=1;input.attackGeneration=2;input.controlWord=control;
+        h5::army::AuxiliaryPowerInput rows[257]{};
+        rows[0]={1,7,0,h5::army::ActorRunicDescriptorCount,control,2};uint32_t length=1;
+        for(uint32_t index=0;index<count;++index) {
+            int school,state;std::cin>>school>>state;
+            if(school!=5)continue;
+            ++rows[0].value;rows[length++]={1,7,state,h5::army::ActorRunicAvailability,control,2};
+        }
+        int32_t numerator=0,denominator=0;
+        if(!h5_preview::ReadFrozenRunicContribution(input,7,rows,length,numerator,denominator))return 2;
+        uint16_t selected=static_cast<uint16_t>(control);float fraction=0;
+        __asm { fldcw selected }
+        if(denominator) { __asm { fild numerator } __asm { fidiv denominator } __asm { fstp fraction } }
+        uint32_t bits;memcpy(&bits,&fraction,sizeof(bits));std::cout<<bits<<'\n';
+    }
+}
+'''.replace('HEADER', header)
+        with tempfile.TemporaryDirectory(prefix='workshop-runic-descriptors-') as directory:
+            folder = Path(directory);(folder / 'runic.cpp').write_text(driver, encoding='utf-8')
+            (folder / 'build.cmd').write_text(f'@call "{vcvarsall()}" x86 >nul\n@if errorlevel 1 exit /b 1\n'
+                                             '@cl /nologo /EHsc /O2 /std:c++20 /Fe:runic.exe runic.cpp\n', encoding='utf-8')
+            built = subprocess.run(['cmd', '/d', '/c', str(folder / 'build.cmd')], cwd=folder, capture_output=True)
+            self.assertEqual(built.returncode, 0, built.stdout.decode(errors='replace') + built.stderr.decode(errors='replace'))
+            completed = subprocess.run([str(folder / 'runic.exe')], input='\n'.join(payload), text=True, capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            actual = [int(line) for line in completed.stdout.splitlines()]
+            self.assertEqual(len(actual), len(expected))
+            for case, own, native in zip(payload, actual, expected):
+                with self.subTest(properties=case):self.assertEqual(own, native)
+
     def test_source_composition_matches_original_rng_grade_and_quantity_branches(self):
         import pefile,itertools
         from unicorn import UC_HOOK_CODE
         from unicorn.x86_const import UC_X86_REG_FPCW
-        text=(MOD_ROOT/'src/preview_plugin.cpp').read_text()
+        text=preview_source()
         implementation='uint32_t DrawSourceRandom(' + text.split('uint32_t DrawSourceRandom(',1)[1].split('struct PlacementAggregate {',1)[0]
         driver=r'''
 #include <cstdint>
@@ -1499,7 +3282,7 @@ int main() {
         import itertools
         from unicorn import UC_HOOK_CODE
         from unicorn.x86_const import UC_X86_REG_FPCW
-        source_text = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source_text = preview_source()
         implementation = 'struct SourceStrengthInput {' + source_text.split(
             'struct SourceStrengthInput {', 1)[1].split('struct PlacementAggregate {', 1)[0]
         driver = r'''
@@ -1656,7 +3439,7 @@ int main() {
             self.assertEqual(actual,expected)
 
     def test_large_candidate_shift_keeps_original_rank_row_and_checks_full_footprint(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         probe_code = 'rank_column:' + source.split('    rank_column:', 1)[1].split('    rank_lane:', 1)[0]
         footprint = 'footprint_free:' + source.split('    footprint_free:', 1)[1].split('    footprint_occupy:', 1)[0]
         assembly = probe_code + '\nrank_lane: jmp 0x306000\nrank_advance: jmp 0x306100\n' + footprint
@@ -1717,8 +3500,102 @@ int main() {
                     saved_cursor = 916 if phase == 6 else 920
                     self.assertEqual(struct.unpack('<I',machine.mem_read(0x303008+saved_cursor,4))[0],expected)
 
+    def test_spread_large_shooter_preserves_candidate_window_score(self):
+        # Retained RMG-B generation440: the minimum shooter window is local1,
+        # while spread retains local0,4,9. Local0 shifts its large anchor to
+        # y2, but must not acquire local1's window score. Native chose y10.
+        source = preview_source()
+        assembly = 'lane_done:' + source.split('    lane_done:', 1)[1].split('    rank_advance:', 1)[0]
+        assembly += '\nrank_advance: jmp 0x306000'
+        assembly = '\n'.join(line.split('//', 1)[0] for line in assembly.splitlines())
+        symbols = {'g_outputStorage': '0x303000', 'g_creatureDefinition': '0x302000',
+                   'g_useSpreadRows': '0x302004', 'g_spreadFallback': '0x302005',
+                   'g_superadminEnabled': '0x302006'}
+        for symbol, address in symbols.items():
+            assembly = assembly.replace(symbol, address)
+        code = bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(assembly, 0x300000)[0])
+        for spread, fallback, window, expected in ((1,0,1,10), (0,0,1,2), (1,1,1,2), (1,0,0,2)):
+            with self.subTest(spread=spread, fallback=fallback, window=window):
+                machine = Uc(UC_ARCH_X86, UC_MODE_32)
+                machine.mem_map(0x200000,65536); machine.mem_map(0x300000,65536)
+                machine.mem_write(0x300000,code)
+                machine.mem_write(0x302000,struct.pack('<I3B',2,spread,fallback,1))
+                machine.mem_write(0x303008+388,struct.pack('<I',12))
+                machine.mem_write(0x303008+740,struct.pack('<3i',1,-1,-1))
+                machine.mem_write(0x303008+784,struct.pack('<I',window))
+                machine.mem_write(0x303008+796,struct.pack('<I',1))
+                for row in (2,5,10):
+                    machine.mem_write(0x303008+904,struct.pack('<I',row))
+                    machine.reg_write(UC_X86_REG_ESP,0x208000)
+                    machine.reg_write(UC_X86_REG_EDI,row)
+                    machine.emu_start(0x300000,0x306000,count=10000)
+                    self.assertEqual(machine.reg_read(UC_X86_REG_ESP),0x208000)
+                self.assertEqual(struct.unpack('<I',machine.mem_read(0x303008+744,4))[0],expected)
+
+    def test_native_spread_shooter_sort_keeps_original_row_before_anchor_shift(self):
+        import pefile
+        from unicorn import UC_HOOK_CODE
+        game = WORKSPACE / '.local/test-game/bin/H5_Game.exe'
+        if not game.is_file():
+            self.skipTest('Pinned game EXE is needed for the native row-sort oracle')
+        self.assertEqual(hashlib.sha256(game.read_bytes()).hexdigest(), probe.HASHES['H5_Game.exe'])
+        executable = pefile.PE(str(game), fast_load=True)
+        image = executable.get_memory_mapped_image()
+        base = executable.OPTIONAL_HEADER.ImageBase
+        executable.close()
+        machine = Uc(UC_ARCH_X86, UC_MODE_32)
+        machine.mem_map(base, (len(image)+4095)&~4095)
+        machine.mem_write(base, image)
+        machine.mem_map(0x200000,0x20000); machine.mem_map(0x300000,0x10000)
+        allocations = [0x210000]
+
+        def allocation_boundary(emulator, address, size, unused):
+            if address not in (0x8791f0,0x879240):
+                return
+            stack = emulator.reg_read(UC_X86_REG_ESP)
+            returned = struct.unpack('<I',emulator.mem_read(stack,4))[0]
+            if address == 0x8791f0:
+                length = struct.unpack('<I',emulator.mem_read(stack+4,4))[0]
+                emulator.reg_write(UC_X86_REG_EAX,allocations[0])
+                allocations[0] += (length+15)&~15
+            emulator.reg_write(UC_X86_REG_ESP,stack+4)
+            emulator.reg_write(UC_X86_REG_EIP,returned)
+
+        machine.hook_add(UC_HOOK_CODE,allocation_boundary)
+        # Generation440: one-row window at local1; spread selects local0,4,9.
+        # Original sorting/copy instructions run unchanged; only heap allocation
+        # and release are supplied by the fixture.
+        machine.mem_write(0x302000,struct.pack('<I',0x302100))
+        machine.mem_write(0x302100,struct.pack('<10I',*[int(row==1) for row in range(10)]))
+        machine.mem_write(0x301000,b''.join(struct.pack('<2I',0,row) for row in range(10)))
+        machine.mem_write(0x208000,struct.pack('<2I',0x30f000,0x302000))
+        machine.reg_write(UC_X86_REG_ECX,0x301000)
+        machine.reg_write(UC_X86_REG_EDX,0x301050)
+        machine.reg_write(UC_X86_REG_ESP,0x208000)
+        machine.emu_start(0x85a9b0,0x30f000,count=100000)
+        ranked = [struct.unpack('<2I',machine.mem_read(0x301000+index*8,8))[1] for index in range(10)]
+        self.assertEqual([row for row in ranked if row in (0,4,9)],[9,4,0])
+        self.assertEqual(machine.reg_read(UC_X86_REG_ESP),0x208008)
+
+        # Generation30: seven spread records retain local row1 separately
+        # from local0. Both reach large anchor y2; row1 keeps its own priority.
+        # Scores are the retained terrain's two-row free approaches, with
+        # local0 using its single valid row as in the original candidate pass.
+        approach_scores = [10,10,10,4,4,1,1,6,10,6]
+        machine.mem_write(0x301000,b''.join(struct.pack('<2I',score,row)
+            for row,score in enumerate(approach_scores)))
+        machine.mem_write(0x208000,struct.pack('<2I',0x30f000,0x85a4f0))
+        machine.reg_write(UC_X86_REG_ECX,0x301000)
+        machine.reg_write(UC_X86_REG_EDX,0x301050)
+        machine.reg_write(UC_X86_REG_ESP,0x208000)
+        machine.emu_start(0x85a700,0x30f000,count=100000)
+        ranked = [struct.unpack('<2I',machine.mem_read(0x301000+index*8,8))[1] for index in range(10)]
+        retained_rows = {0,1,2,3,4,5,9}
+        self.assertEqual(next(row for row in ranked if row in retained_rows),1)
+        self.assertEqual(machine.reg_read(UC_X86_REG_ESP),0x208008)
+
     def test_retry_excludes_global_weakest_and_resets_only_owned_occupancy(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'bool ExcludeWeakestProjection() {' + source.split(
             'bool ExcludeWeakestProjection() {', 1)[1].split('bool CaptureSourceSimpleColumns()', 1)[0]
         driver = r'''
@@ -1891,7 +3768,7 @@ int main() {
             self.assertEqual(struct.unpack('<I', machine.mem_read(0x306048, 4))[0], 100)
             cases.append((left_flying, right_flying, left_speed, right_speed,
                           left_score, right_score, machine.reg_read(UC_X86_REG_EAX) & 255))
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'bool __fastcall PublicPlacementPairBefore(const int* left, const int* right) {' + source.split(
             'bool __fastcall PublicPlacementPairBefore(const int* left, const int* right) {', 1)[1].split(
             'int PublicPlacementRole(uint32_t type) {', 1)[0]
@@ -1927,7 +3804,7 @@ int main() {
             self.assertEqual(completed.returncode,0,completed.stderr)
 
     def test_physical_shooter_uses_frozen_original_army_not_ammo_or_stale_rows(self):
-        source=(MOD_ROOT/'src/preview_plugin.cpp').read_text()
+        source=preview_source()
         declarations='struct FrozenActorInput {'+source.split('struct FrozenActorInput {',1)[1].split('void* g_creatureDefinition',1)[0]
         implementation='bool PlacementHasPhysicalShot(uint32_t type) {'+source.split('bool PlacementHasPhysicalShot(uint32_t type) {',1)[1].split('bool PreparePublicOrder()',1)[0]
         driver=r"""
@@ -1982,7 +3859,8 @@ int main() {
             self.assertEqual(completed.returncode,0,completed.stderr.decode(errors='replace'))
 
     def test_ground_retry_combines_support_linked_and_ground_without_replacing_source_indices(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
+        quantity_helpers = 'uint32_t ParseDisclosedQuantity(' + source.split('uint32_t ParseDisclosedQuantity(',1)[1].split('// The stock public model',1)[0]
         ordering = 'bool PreparePublicOrder() {' + source.split('bool PreparePublicOrder() {',1)[1].split('bool ExcludeWeakestProjection()',1)[0]
         aggregate = 'struct PlacementAggregate {' + source.split('struct PlacementAggregate {',1)[1].split('struct PlacementWeights',1)[0]
         comparator = 'bool __fastcall PublicPlacementPairBefore(const int* left, const int* right) {' + source.split('bool __fastcall PublicPlacementPairBefore(const int* left, const int* right) {',1)[1].split('int PublicPlacementRole(uint32_t type) {',1)[0]
@@ -1996,6 +3874,8 @@ bool g_superadminEnabled=true,g_sourceSimpleLayout=false,g_predictedDefensive=fa
 LONG g_publicCount=5,g_superadminSourceCount=5,g_superadminSourceGeneration=1,g_placementGeneration=1;
 uint32_t g_sourceComposition[24]{},g_groundRetryOrder[7]{},g_predictionExcludedMask=0;
 uint32_t g_publicTypes[7]{10,11,12,14,13},g_orderedPublicTypes[7]{};
+uint32_t g_publicKnownCounts[7]{};
+wchar_t g_publicQuantityLabels[7][32]{};uint32_t g_publicBands[7]{};
 uint32_t g_superadminSourceTypes[7]{10,11,12,14,13},g_superadminSourceCounts[7]{10,20,30,40,50};
 int32_t g_superadminSourceSpeed[7]{4,4,4,4,4},g_publicSortSpeed[7]{};
 uint32_t g_superadminSourceFlying[7]{},g_publicSortFlying[7]{};
@@ -2016,7 +3896,7 @@ void __fastcall Sort(SortPair* begin,SortPair* end,uintptr_t comparator) {
         return PublicPlacementPairBefore(reinterpret_cast<const int*>(&left),reinterpret_cast<const int*>(&right));
     });
 }
-""" + ordering + r"""
+""" + quantity_helpers + ordering + r"""
 int main() {
     *reinterpret_cast<int*>(g_outputStorage+8+384)=16;
     for (auto& definition:definitions) {
@@ -2047,6 +3927,14 @@ int main() {
     g_superadminSourceGeneration=1;g_superadminSourceCount=4;assert(!PreparePublicOrder());
     g_superadminSourceCount=5;g_superadminEnabled=false;g_publicTypes[0]=9;
     assert(PreparePublicOrder() && g_publicTypes[0]==9); // ordinary identity stays public
+    memcpy(g_publicQuantityLabels[0],L"10-19",sizeof(L"10-19"));
+    assert(PreparePublicOrder() && g_publicPlacementScore[0]==30);
+    const auto estimatedDestination=reinterpret_cast<uint32_t*>(g_outputStorage+8+924)[0];
+    assert(reinterpret_cast<uint32_t*>(g_outputStorage+8+832)[estimatedDestination]==0);
+    g_publicKnownCounts[0]=20;assert(PreparePublicOrder() && g_publicPlacementScore[0]==40);
+    const auto disclosedDestination=reinterpret_cast<uint32_t*>(g_outputStorage+8+924)[0];
+    assert(reinterpret_cast<uint32_t*>(g_outputStorage+8+832)[disclosedDestination]==20);
+    g_publicKnownCounts[0]=0;memset(g_publicQuantityLabels,0,sizeof(g_publicQuantityLabels));
     g_superadminEnabled=true;g_sourceSimpleLayout=true;g_publicCount=2;g_superadminSourceCount=1;
     g_sourceComposition[0]=1;g_sourceComposition[12]=2;
     g_sourceComposition[17]=5;g_sourceComposition[19]=6;
@@ -2083,7 +3971,7 @@ int main() {
         # the footprint boundary is supplied separately, not a full arena replay.
         assembly='rank_window_ready:' + source.split('    rank_window_ready:',1)[1].split('    rank_selected:',1)[0]
         assembly='\n'.join(line.split('//',1)[0] for line in assembly.splitlines())
-        assembly += '\nrank_selected: jmp 0x306000\nnext_model: jmp 0x306100\nfootprint_free: mov eax,1; ret\nSpreadRowAllowed: mov eax,1; ret'
+        assembly += '\nrank_selected: jmp 0x306000\nnext_model: jmp 0x306100\nfootprint_free: mov eax,1; ret\nSpreadRowAllowed: mov eax,1; ret\nSpreadSecondRowUsesOwnPriority: mov eax,1; ret'
         for symbol,address in {'g_candidateIdentity':'0x302000','g_creatureDefinition':'0x302004',
                 'g_superadminEnabled':'0x302008','g_useSpreadRows':'0x302009',
                 'g_spreadFallback':'0x30200a','g_outputStorage':'0x303000'}.items():
@@ -2180,9 +4068,9 @@ int main() {
             self.assertIsInstance(failure.exception.__cause__, OSError)
 
     def test_superadmin_spread_rows_follow_native_integer_spacing(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'bool __cdecl SpreadRowAllowed(' + source.split('bool __cdecl SpreadRowAllowed(', 1)[1].split(
-            'void ResetSuperadminInputCapture() {', 1)[0]
+            '// Configuration changes apply at the next attack', 1)[0]
         driver = r'''
 #include <windows.h>
 #include <cstdint>
@@ -2252,6 +4140,13 @@ int main() {
     }
     assert(SpreadRowAllowed(6,8) && SpreadRowAllowed(7,4)); // native leftover passes remain unrestricted
     g_spreadFallback=true;assert(SpreadRowAllowed(5,8));
+    g_spreadFallback=false;
+    for(int count=2;count<=7;++count) {
+        g_publicCount=count;
+        assert(SpreadSecondRowUsesOwnPriority()==(count>=6));
+    }
+    *reinterpret_cast<int*>(g_outputStorage+8+388)=4;g_publicCount=2;
+    assert(SpreadSecondRowUsesOwnPriority());
 }
 '''
         with tempfile.TemporaryDirectory(prefix='workshop-spread-') as directory:
@@ -2275,15 +4170,17 @@ int main() {
                                 'g_superadminEnabled': '0x302008'}.items():
             rank = rank.replace(symbol, address)
         code = bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(rank, addr=0x300000)[0])
-        for spread, scored_rows, selected in ((0, ((2, 10), (5, 10)), 2),
-                                              (1, ((2, 10), (5, 10)), 5),
-                                              (1, ((2, 10), (10, 0)), 2)):
+        for spread, scored_rows, selected, own_priority in ((0, ((2, 10), (5, 10)), 2, 0),
+                                              (1, ((2, 10), (5, 10)), 5, 0),
+                                              (1, ((2, 10), (10, 0)), 2, 0),
+                                              (1, ((2, 10), (3, 10)), 2, 1)):
             machine = Uc(UC_ARCH_X86, UC_MODE_32)
             machine.mem_map(0x200000, 65536)
             machine.mem_map(0x300000, 65536)
             machine.mem_write(0x300000, code)
             machine.mem_write(0x302000, bytes([spread, 0, 0, 0]) + struct.pack('<I', 2))
             machine.mem_write(0x303008 + 744, struct.pack('<2i', -1, -1))
+            machine.mem_write(0x303008 + 1396, struct.pack('<I', own_priority))
             machine.reg_write(UC_X86_REG_ESP, 0x208000)
             for row, score in scored_rows:
                 machine.reg_write(UC_X86_REG_EDI, row)
@@ -2299,7 +4196,7 @@ int main() {
             self.assertEqual(executable.get_data(0xbfacfb - executable.OPTIONAL_HEADER.ImageBase, 3),
                              bytes.fromhex('c2 10 00'))  # Aggregate builder owns all four stack arguments.
             executable.close()
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         capture = 'void CaptureSuperadminSource(' + source.split('void CaptureSuperadminSource(', 1)[1].split(
             '// The stock public model', 1)[0]
         scripted = 'void __cdecl CaptureScriptedSource(' + source.split('void __cdecl CaptureScriptedSource(', 1)[1].split(
@@ -2324,10 +4221,12 @@ uint32_t g_publicTypes[7]{};
 int resetCalls=0;
 void ResetSuperadminInputCapture() { ++resetCalls; }
 struct FrozenActorInput { uint32_t world,army,source,type,quantity,attackGeneration,unsupported; };
-FrozenActorInput g_actorInputs[256]{};
+constexpr uint32_t kActorInputCapacity=1024;
+FrozenActorInput g_actorInputs[kActorInputCapacity]{};
 volatile LONG g_actorInputCount=0,g_actorInputGeneration=0;
 bool g_actorInputOverflow=false;
 uint32_t g_publicBands[7]{};
+uint32_t g_publicKnownCounts[7]{};wchar_t g_publicQuantityLabels[7][32]{};
 int expectedAggregateCount=2;
 int32_t g_superadminSourceSpeed[7]{};
 uint32_t g_superadminSourceFlying[7]{};
@@ -2448,7 +4347,7 @@ int main() {
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
 
     def test_protective_phase_stops_after_shooters_large_and_small(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         assembly = 'next_model:' + source.split('    next_model:', 1)[1].split('    footprint_free:', 1)[0]
         assembly = assembly.replace('call PrepareProtectiveCandidates', 'nop')
         for symbol, address in {'g_definitionMaximum':'0x302000', 'g_publicCount':'0x302004',
@@ -2473,7 +4372,7 @@ int main() {
             self.assertEqual(struct.unpack('<I',machine.mem_read(0x302008,4))[0],expected)
 
     def test_superadmin_goblin_adjacency_uses_carrier_lists_and_native_ties(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'int PublicPlacementRole(uint32_t type) {' + source.split(
             'int PublicPlacementRole(uint32_t type) {', 1)[1].split('bool __cdecl SpreadRowAllowed(', 1)[0]
         driver = r'''
@@ -2575,9 +4474,10 @@ int main() {
             self.assertEqual(completed.returncode,0,completed.stderr.decode(errors='replace'))
 
     def test_known_hero_policy_uses_own_counts_sizes_and_runtime_threshold(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
+        quantity_helpers = 'uint32_t ParseDisclosedQuantity(' + source.split('uint32_t ParseDisclosedQuantity(',1)[1].split('// The stock public model',1)[0]
         implementation = 'struct PlacementAggregate {' + source.split('struct PlacementAggregate {', 1)[1].split(
-            '// Ordinary mode uses synthetic quantity=1', 1)[0]
+            'bool PlacementHasPhysicalShot(uint32_t type) {', 1)[0]
         driver = r'''
 #include <windows.h>
 #include <cstdint>
@@ -2600,7 +4500,8 @@ uint32_t g_estimatedSpreadDenominator=0;
 int32_t g_knownHeroAttack=-1;
 bool g_knownHeroBattleFrenzy=false;
 LONG g_publicCount=7;
-uint32_t g_publicTypes[7]{},g_publicBands[7]{};
+uint32_t g_publicTypes[7]{},g_publicBands[7]{},g_publicKnownCounts[7]{};
+wchar_t g_publicQuantityLabels[7][32]{};
 unsigned char g_outputStorage[4104]{};
 int g_cell[14]{};
 int g_protectiveCells[120]{},g_protectiveCellCount=0;
@@ -2623,7 +4524,7 @@ FrozenSourceStrength g_sourceStrengthInputs[256]{};
 uint32_t g_sourceStrengthCount=0;
 LONG g_superadminSourceCount=0;
 uint32_t g_superadminSourcePointers[7]{},g_superadminSourceTypes[7]{},g_superadminSourceCounts[7]{};
-'''+implementation+r'''
+'''+quantity_helpers+implementation+r'''
 int __fastcall Score(const PlacementAggregate* value,void*,const PlacementAggregate*) { return value->health; }
 int main() {
     definitions[1][0xdc/4]=1;definitions[1][0x64/4]=10;
@@ -2739,15 +4640,18 @@ int main() {
     g_publicBands[0]=4;g_publicBands[1]=3;
     hero[4]=3;
     mockFrenzy=1;
-    CaptureKnownHeroModifiers(owner);assert(g_knownHeroAttack==3 && g_knownHeroBattleFrenzy);
-    PrepareKnownHeroPolicy();assert(g_knownHeroAttack==3 && g_knownHeroBattleFrenzy);
-    const uint32_t frenzyDenominator=g_estimatedSpreadDenominator;
+    CaptureKnownHeroModifiers(owner);assert(g_knownHeroAttack==-1 && !g_knownHeroBattleFrenzy);
+    PrepareKnownHeroPolicy();assert(g_knownHeroAttack==-1 && !g_knownHeroBattleFrenzy);
+    const uint32_t baseDenominator=g_estimatedSpreadDenominator;
     mockFrenzy=0;
-    PrepareKnownHeroPolicy();assert(g_estimatedSpreadDenominator<frenzyDenominator);
+    PrepareKnownHeroPolicy();assert(g_estimatedSpreadDenominator==baseDenominator);
     hero[4]=0;
-    PrepareKnownHeroPolicy();assert(g_knownHeroAttack==0 && !g_knownHeroBattleFrenzy);
+    PrepareKnownHeroPolicy();assert(g_knownHeroAttack==-1 && !g_knownHeroBattleFrenzy);
     hero[4]=1001;
     CaptureKnownHeroModifiers(owner);assert(g_knownHeroAttack==-1);
+    owner[0x98/4]=1; // Inaccessible hero metadata must never be read in ordinary mode.
+    PrepareKnownHeroPolicy();assert(g_estimatedSpreadDenominator==baseDenominator);
+    owner[0x98/4]=reinterpret_cast<uint32_t>(holder);
     g_superadminEnabled=true;
     g_sourceStrengthCount=3;
     g_sourceStrengthInputs[0].metadata[1]=reinterpret_cast<uint32_t>(hero);
@@ -2777,7 +4681,7 @@ int main() {
             self.assertEqual(completed.returncode,0,completed.stderr.decode(errors='replace'))
 
     def test_shooter_window_replays_recorded_large_hero_counterexample(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         assembly = source.split('        // Nival 0x857e60:',1)[1].split('    rank_window_ready:',1)[0]
         assembly = '// Nival 0x857e60:' + assembly + '\nrank_window_ready: jmp 0x306000'
         assembly = '\n'.join(line.split('//',1)[0] for line in assembly.splitlines())
@@ -2823,15 +4727,16 @@ int main() {
     def test_projection_cards_range_and_details_use_public_selected_grade(self):
         # Setup: exercise production selection/provider callbacks with a fake
         # engine definition registry and native card provider at their ABI seam.
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'int HoveredProjectionSlot() {' + source.split('int HoveredProjectionSlot() {', 1)[1].split(
             '// The deployment title is', 1)[0]
         implementation += 'int ComputeProjectionRange(' + source.split('int ComputeProjectionRange(', 1)[1].split(
-            '__declspec(naked) void ProjectionOutlineHook()', 1)[0]
+            'void __stdcall ApplyProjectionOutline(', 1)[0]
         implementation += 'bool __fastcall ProjectionDetailsCanRotate(' + source.split('bool __fastcall ProjectionDetailsCanRotate(', 1)[1].split(
             'int HoveredProjectionSlot() {', 1)[0]
-        implementation += 'LRESULT CALLBACK ProjectionWindowProc(' + source.split('LRESULT CALLBACK ProjectionWindowProc(', 1)[1].split(
+        implementation += 'void ObserveProjectionWindowInput(' + source.split('void ObserveProjectionWindowInput(', 1)[1].split(
             'BOOL CALLBACK FindProjectionWindow(', 1)[0]
+        implementation = 'void ProcessProjectionDetails(bool installRotatorCallbacks = true);\nvoid ReleaseProjectionDetailsRotator();\n' + implementation
         setup = vcvarsall()
         if not setup.is_file():
             self.skipTest('MSVC x86 is required for production tooltip callback checks')
@@ -2854,6 +4759,8 @@ LONG g_detailsGeneration=-1;
 int g_detailsPoint[2]{};
 bool g_detailsHitTest=false;
 uint32_t* g_detailsRotator=nullptr;
+bool g_detailsRotatorOwned=false;
+const uint32_t* g_detailsNativeMethods=nullptr;
 unsigned g_detailsProjectionSlot=7;
 LONG g_detailsRotatorGeneration=-1;
 LRESULT CALLBACK OriginalWindow(HWND,UINT,WPARAM,LPARAM) { return 73; }
@@ -2884,6 +4791,7 @@ uint32_t originalRotatorMethods[16]={0x87654321,1,2,3,4,5,6,7,8,9,10,11,12,13,14
 unsigned queuedDetails=0,detailsType=0;
 bool blockDetails=false,failCreature=false,failRotator=false,failCommand=false;
 bool detailsScreenActive=true;
+bool __cdecl NativeCapabilityAvailable() { return true; }
 bool __fastcall ActiveDetailsScreen(void*) { return detailsScreenActive; }
 bool __fastcall HitWindow(void*,void*,const int* point) {
     CHECK(g_detailsHitTest && point[0]==120 && point[1]==230);return blockDetails;
@@ -3048,8 +4956,38 @@ int main() {
     *reinterpret_cast<uint32_t*>(output+640)=57;
     --rotatorObject[6];ReleaseDetails(rotatorObject+4);
     CHECK(creatureObject[6]==0 && alternateObject[6]==0);
+    ReleaseProjectionDetailsRotator();
+    // Managed refresh calls the rotator capability directly, outside the
+    // intercepted factory call. It must stay enabled with native-only methods.
+    uint32_t residentMethods[16];memcpy(residentMethods,originalRotatorMethods,sizeof(residentMethods));
+    residentMethods[5]=reinterpret_cast<uint32_t>(NativeCapabilityAvailable);
+    g_detailsNativeMethods=residentMethods+1;
+    ProjectionWindowProc(nullptr,WM_LBUTTONDBLCLK,0,point);ProcessProjectionDetails(false);
+    CHECK(queuedDetails==2 && g_detailsRotatorOwned && rotatorObject[6]==2);
+    CHECK(rotatorObject[0]==reinterpret_cast<uint32_t>(g_detailsNativeMethods));
+    auto* nativeMethods=reinterpret_cast<const uint32_t*>(rotatorObject[0]);
+    CHECK(nativeMethods[-1]==originalRotatorMethods[0]);
+    CHECK(reinterpret_cast<bool(__thiscall*)(void*)>(nativeMethods[4])(rotatorObject));
+    ProjectionDetailsNext(rotatorObject,nullptr);CHECK(g_tooltipChoice[0]==0);
+    ProjectionDetailsPrevious(rotatorObject,nullptr);CHECK(g_tooltipChoice[0]==2);
+    ReleaseProjectionDetailsRotator();
+    CHECK(rotatorObject[0]==reinterpret_cast<uint32_t>(originalRotatorMethods+1));
+    CHECK(rotatorObject[6]==1); // Native screen still owns its reference.
+    --rotatorObject[6];ReleaseDetails(rotatorObject+4);
+    failCommand=true;
+    ProjectionWindowProc(nullptr,WM_LBUTTONDBLCLK,0,point);ProcessProjectionDetails(false);
+    CHECK(!g_detailsRotatorOwned && rotatorObject[6]==0);
+    CHECK(rotatorObject[0]==reinterpret_cast<uint32_t>(originalRotatorMethods+1));
+    failCommand=false;
+    *reinterpret_cast<uint32_t*>(output+640)=58;
+    *reinterpret_cast<uint32_t*>(output+504)=58;
+    ProjectionWindowProc(nullptr,WM_LBUTTONDBLCLK,0,point);ProcessProjectionDetails(false);
+    CHECK(queuedDetails==3);
+    CHECK(rotatorObject[0]==reinterpret_cast<uint32_t>(originalRotatorMethods+1));
+    CHECK(!ProjectionDetailsCanRotate(rotatorObject,nullptr));
+    ReleaseProjectionDetailsRotator();--rotatorObject[6];ReleaseDetails(rotatorObject+4);
     *reinterpret_cast<uint32_t*>(output+496)=0;
-    ProjectionWindowProc(nullptr,WM_LBUTTONDBLCLK,0,point);ProcessProjectionDetails();CHECK(queuedDetails==1);
+    ProjectionWindowProc(nullptr,WM_LBUTTONDBLCLK,0,point);ProcessProjectionDetails();CHECK(queuedDetails==3);
     std::cout<<"public upgrade cycle and native fallback passed";
 }
 '''.replace('IMPLEMENTATION', implementation)
@@ -3084,7 +5022,7 @@ int main() {
     def test_projection_glow_owns_only_its_effect_and_releases_failures(self):
         # Setup: compile the production glow code. Fake only the fixed native
         # engine boundary; no game, windows, cursor or real rendering is used.
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'struct ProjectionGlow {' + source.split('struct ProjectionGlow {', 1)[1].split(
             'struct PlacementAggregate {', 1)[0]
         setup = vcvarsall()
@@ -3225,7 +5163,7 @@ int main() {
     def test_public_movement_range_obeys_costs_obstacles_flight_and_full_footprints(self):
         # Setup: compile the production calculation itself as a standalone x86
         # program. No process memory, game, renderer or hidden army is involved.
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         calculation = 'int ComputeProjectionRange(' + source.split('int ComputeProjectionRange(', 1)[1].split(
             '// Native highlight vectors', 1)[0]
         compiler_setup = vcvarsall()
@@ -3472,7 +5410,7 @@ int main() {
     def test_auxiliary_bridge_captures_return_value_and_preserves_epilogue(self):
         from unicorn import Uc, UC_ARCH_X86, UC_MODE_32
         from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EAX, UC_X86_REG_EDI, UC_X86_REG_FPCW
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         assembly = source.split('__declspec(naked) void AuxiliaryPowerHook()', 1)[1].split('__asm {', 1)[1].split('}', 1)[0]
         assembly = assembly.replace('CaptureSuperadminAuxiliaryPower','0x300800').replace(
             'CaptureAreaSpellInput','0x300900').replace('kAuxiliaryPowerResume','0xbfa4aa')
@@ -3503,7 +5441,7 @@ int main() {
     def test_hero_bridge_captures_scalars_and_replays_integer_add(self):
         from unicorn import Uc, UC_ARCH_X86, UC_MODE_32
         from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EAX, UC_X86_REG_EBX, UC_X86_REG_EDI, UC_X86_REG_FPCW
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         assembly = source.split('__declspec(naked) void HeroCorrectionHook()', 1)[1].split('__asm {', 1)[1].split('}', 1)[0]
         assembly = assembly.replace('CaptureSuperadminHeroCorrection', '0x300800').replace('kHeroCorrectionResume', '0xbfc135')
         assembler = keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32)
@@ -3556,7 +5494,7 @@ int main() {
                 cpu.emu_start(0xbfc172, 0xbfc182, count=1000)
                 expected = struct.unpack('<I', cpu.mem_read(0x2001014, 4))[0]
                 cases.append(f'{{{control}, {repr(float(factor))}f, {first}, {second}, {expected}u}}')
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
             'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
@@ -3577,10 +5515,10 @@ int main() {
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
 
     def test_owned_defence_selection_uses_frozen_capabilities_strict_thresholds_and_guards(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         declarations = 'struct FrozenActorInput {' + source.split('struct FrozenActorInput {', 1)[1].split('void* g_creatureDefinition', 1)[0]
         core = 'struct PlacementAggregate {' + source.split('struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
-        builder = 'bool BuildFrozenPlacementCore(' + source.split('bool BuildFrozenPlacementCore(', 1)[1].split('void PrepareSuperadminAggregates()', 1)[0]
+        builder = 'bool ReadFrozenRunicContribution(' + source.split('bool ReadFrozenRunicContribution(', 1)[1].split('void PrepareSuperadminAggregates()', 1)[0]
         strategy = 'bool BuildFrozenOwnSubset(' + source.split('bool BuildFrozenOwnSubset(', 1)[1].split('void __cdecl CaptureScriptedSource(', 1)[0]
         driver = r'''
 #include <windows.h>
@@ -3631,6 +5569,12 @@ int main() {
     g_actorInputGeneration=1;g_actorInputs[2].ignoreWhenNoRanged=1;
     assert(!FrozenArmyRangedCapability(g_actorInputs,3,2,false));
     assert(FrozenArmyRangedCapability(g_actorInputs,3,2,true));
+    g_actorInputs[2].ignoreWhenNoRanged=0;
+    g_actorInputs[2].rangedCapability=2; // Native list excludes this actor before capability testing.
+    assert(FrozenArmyRangedCapability(g_actorInputs,3,2,false));
+    g_actorInputs[2].rangedCapability=0;
+    assert(!FrozenArmyRangedCapability(g_actorInputs,3,2,false));
+
     g_actorInputWorld=1;g_actorInputs[0].army=2;g_actorInputs[0].source=3;
     g_actorInputs[0].type=4;g_actorInputs[0].quantity=9;g_actorInputs[0].controlWord=0x0c7f;
     g_areaInputCount=2;
@@ -3695,12 +5639,12 @@ int main() {
             self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
 
     def test_frozen_core_uses_latest_contiguous_batch_and_restores_control_word(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         declarations = 'struct FrozenActorInput {' + source.split('struct FrozenActorInput {', 1)[1].split(
             'void* g_creatureDefinition', 1)[0]
         core = 'struct PlacementAggregate {' + source.split('struct PlacementAggregate {', 1)[1].split(
             'void CaptureKnownHeroModifiers(', 1)[0]
-        builder = 'bool BuildFrozenPlacementCore(' + source.split('bool BuildFrozenPlacementCore(', 1)[1].split(
+        builder = 'bool ReadFrozenRunicContribution(' + source.split('bool ReadFrozenRunicContribution(', 1)[1].split(
             'void PrepareSuperadminAggregates()', 1)[0]
         driver = '#include <windows.h>\n#include <cstdint>\n#include <cstring>\n#include <cassert>\n'
         driver += declarations + core + builder + r'''
@@ -3736,12 +5680,63 @@ int main() {
     NormalizePlacementAggregate(expected,weights);__asm { fldcw original }
     assert(memcmp(&result,&expected,sizeof(result))==0);
     PlacementAggregate retained=result;
+    FrozenAuxiliaryPower extras[5]{{10,4,7,0xbfbb90,0x0c7f,3},
+        {10,5,-2,0xbfbbc3,0x0c7f,3},{10,5,11,0xbfc194,0x0c7f,3},
+        {9,5,100,0xbfbb90,0x0c7f,3},{10,5,100,0xbfbb90,0x0c7f,2}};
+    FrozenHeroCorrection corrections[3]{{10,5,3,4,0x0c7f,3},
+        {10,5,7,8,0x0c7f,3},{9,5,100,100,0x0c7f,3}};
+    PlacementAggregate corrected=result;
+    uint32_t applied=0;
+    assert(ApplyCapturedPlacementCorrections(rows,5,3,5,3,extras,5,corrections,3,corrected,applied));
+    assert(applied==3 && corrected.extra2==result.extra2+16);
+    __asm { fldcw captured }
+    const float expectedCorrection=ApplyHeroActionCorrection(result.multiplier,7,8);
+    __asm { fldcw original }
+    assert(corrected.multiplier==expectedCorrection);
+    __asm { fnstcw restored }
+    assert(restored==original);
+    corrected=result;
+    assert(ApplyCapturedPlacementCorrections(rows,5,3,5,3,extras,5,corrections,3,corrected,applied,1));
+    assert(corrected.extra2==result.extra2+18 && applied==3);
+    corrected=result;
+    assert(ApplyCapturedPlacementCorrections(rows,5,3,5,3,extras,5,corrections,3,corrected,applied,2));
+    assert(corrected.extra2==result.extra2+9 && applied==3);
+    corrected=result;extras[0].inputCount=6;
+    assert(!ApplyCapturedPlacementCorrections(rows,5,3,5,3,extras,5,corrections,3,corrected,applied));
+    assert(memcmp(&corrected,&result,sizeof(result))==0 && applied==0);
+    extras[0].inputCount=4;corrections[1].controlWord=0x10000;
+    assert(!ApplyCapturedPlacementCorrections(rows,5,3,5,3,extras,5,corrections,3,corrected,applied));
+    assert(memcmp(&corrected,&result,sizeof(result))==0);
+    corrections[1].controlWord=0x0c7f;
+    assert(!ApplyCapturedPlacementCorrections(rows,5,4,3,3,extras,5,corrections,3,corrected,applied));
+    assert(!ApplyCapturedPlacementCorrections(rows,5,3,5,3,nullptr,1,corrections,3,corrected,applied));
     rows[4].source=rows[3].source;
     assert(!BuildFrozenPlacementCore(rows,5,1,2,3,result,count) && count==0);
     assert(memcmp(&result,&retained,sizeof(result))==0);
     rows[4].source=202;rows[4].unsupported=64;
     assert(!BuildFrozenPlacementCore(rows,5,1,2,3,result,count));
     rows[4].unsupported=0;
+    rows[3].unsupported=rows[4].unsupported=32;
+    FrozenAuxiliaryPower runes[4]{};
+    for(unsigned index=0;index<2;++index) {
+        const auto& row=rows[3+index];
+        runes[index*2]={row.aggregateIdentity,4+index,1,0xbfb3dbu,row.controlWord,row.attackGeneration};
+        runes[index*2+1]={row.aggregateIdentity,4+index,static_cast<int32_t>(index),0xbfb430u,row.controlWord,row.attackGeneration};
+    }
+    assert(!BuildFrozenPlacementCore(rows,5,1,2,3,result,count)); // legacy unsupported32 has no primitive proof
+    assert(BuildFrozenPlacementCore(rows,5,1,2,3,result,count,nullptr,UINT_MAX,runes,4));
+    PlacementAggregate subset{};uint32_t subsetCount=0;
+    assert(BuildFrozenPlacementCore(rows+3,2,1,2,3,subset,subsetCount,nullptr,UINT_MAX,runes,4,3));
+    assert(subsetCount==2 && memcmp(&subset,&result,sizeof(result))==0);
+    runes[0].value=2;
+    assert(!BuildFrozenPlacementCore(rows,5,1,2,3,result,count,nullptr,UINT_MAX,runes,4));
+    runes[0].value=1;runes[1].controlWord^=1;
+    assert(!BuildFrozenPlacementCore(rows,5,1,2,3,result,count,nullptr,UINT_MAX,runes,4));
+    runes[1].controlWord^=1;runes[1].caller=0xbfb3dbu;
+    assert(!BuildFrozenPlacementCore(rows,5,1,2,3,result,count,nullptr,UINT_MAX,runes,4));
+    runes[1].caller=0xbfb430u;runes[1].attackGeneration=4;
+    assert(!BuildFrozenPlacementCore(rows,5,1,2,3,result,count,nullptr,UINT_MAX,runes,4));
+    rows[3].unsupported=rows[4].unsupported=0;
     assert(!BuildFrozenPlacementCore(rows,5,1,2,4,result,count));
     assert(!BuildFrozenPlacementCore(rows,0,1,2,3,result,count));
     __asm { fnstcw restored }
@@ -3761,7 +5756,7 @@ int main() {
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
 
     def test_owned_actor_capture_is_opt_in_bounded_frozen_and_reset_per_attack(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         declarations = 'struct FrozenActorInput {' + source.split('struct FrozenActorInput {', 1)[1].split(
             'void* g_creatureDefinition', 1)[0]
         implementation = 'void ResetSuperadminInputCapture() {' + source.split(
@@ -3847,11 +5842,16 @@ int main() {
     assert(g_auxiliaryInputCount==0 && g_auxiliaryInputOverflow==0);
     assert(WorkshopDeploymentPreviewSuperadminInputTrace(output)==1 && output[2]==2 && output[3]==0);
     for(unsigned index=8;index<words;++index) assert(output[index]==0);
-    for(unsigned index=0;index<257;++index) CaptureSuperadminActorInput(nullptr,11,index,0,0);
-    assert(g_actorInputCount==256 && g_actorInputOverflow==1);
-    assert(WorkshopDeploymentPreviewSuperadminInputTrace(output)==1 && output[3]==256 && output[4]==1);
-    for(unsigned index=0;index<257;++index) CaptureSuperadminAuxiliaryPower(11,index,0xbfbb90);
-    assert(g_auxiliaryInputCount==256 && g_auxiliaryInputOverflow==1);
+    for(unsigned index=0;index<kActorInputCapacity+1;++index) CaptureSuperadminActorInput(nullptr,11,index,0,0);
+    assert(g_actorInputCount==kActorInputCapacity && g_actorInputOverflow==1);
+    output[0]=0x12345678;output[words-1]=0x87654321;
+    assert(WorkshopDeploymentPreviewSuperadminInputTrace(output)==0);
+    assert(output[0]==0x12345678 && output[words-1]==0x87654321); // old caller buffer untouched
+    constexpr unsigned auxiliaryCapacity=sizeof(g_auxiliaryInputs)/sizeof(g_auxiliaryInputs[0]);
+    for(unsigned index=0;index<auxiliaryCapacity+1;++index) CaptureSuperadminAuxiliaryPower(11,index,0xbfbb90);
+    assert(g_auxiliaryInputCount==auxiliaryCapacity && g_auxiliaryInputOverflow==1);
+    assert(WorkshopDeploymentPreviewSuperadminInputTrace(output)==0);
+    ResetSuperadminInputCapture();
     ++g_actorInputSequence;
     assert(WorkshopDeploymentPreviewSuperadminInputTrace(output)==2);
     ++g_actorInputSequence;
@@ -3860,6 +5860,12 @@ int main() {
     for(unsigned index=8;index<words;++index) assert(output[index]==0);
     assert(buffer[0]==0x55aa55aa && buffer[words+1]==0xaa55aa55);
     g_superadminEnabled=true;
+    ResetSuperadminInputCapture();
+    g_heroCorrectionCount=65;
+    output[0]=0x12345678;output[words-1]=0x87654321;
+    assert(WorkshopDeploymentPreviewSuperadminInputTrace(output)==0);
+    assert(output[0]==0x12345678 && output[words-1]==0x87654321);
+    assert(buffer[0]==0x55aa55aa && buffer[words+1]==0xaa55aa55);
     ResetSuperadminInputCapture();
     CaptureSourceStrengthInput(nullptr,nullptr,17);
     assert(g_sourceStrengthCount==1 && g_sourceStrengthInputs[0].metadata[6]==2);
@@ -3956,7 +5962,7 @@ int main() {
             (temporary / 'capture.cpp').write_text(driver, encoding='utf-8')
             (temporary / 'build.cmd').write_text(
                 f'@call "{vcvarsall()}" x86 >nul\n@if errorlevel 1 exit /b 1\n'
-                '@cl /nologo /EHsc /O2 /std:c++20 /Fe:capture.exe capture.cpp\n', encoding='utf-8')
+                '@cl /nologo /EHsc /O2 /std:c++20 /Fe:capture.exe capture.cpp user32.lib\n', encoding='utf-8')
             build = subprocess.run(['cmd', '/d', '/c', str(temporary / 'build.cmd')], cwd=temporary, capture_output=True)
             self.assertEqual(build.returncode, 0, build.stdout.decode(errors='replace') + build.stderr.decode(errors='replace'))
             result = subprocess.run([str(temporary / 'capture.exe')], capture_output=True)
@@ -3965,7 +5971,7 @@ int main() {
     def test_attack_reset_preserves_portrait_input_registers_and_fpu(self):
         from unicorn import Uc, UC_ARCH_X86, UC_MODE_32
         from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_FPCW
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         assembly = source.split('__declspec(naked) void AttackHook()', 1)[1].split('__asm {', 1)[1].split(
             'push dword ptr [esp + 12]', 1)[0]
         for symbol, replacement in (('g_fpu', '0x304000'), ('g_attackGeneration', '0x302000'),
@@ -3999,7 +6005,7 @@ int main() {
         from unicorn.x86_const import (UC_X86_REG_ESP, UC_X86_REG_ESI, UC_X86_REG_EDI,
                                       UC_X86_REG_EBX, UC_X86_REG_EBP, UC_X86_REG_EFLAGS,
                                       UC_X86_REG_FPCW, UC_X86_REG_MXCSR, UC_X86_REG_XMM0)
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         assembly = source.split('__declspec(naked) void ActorInputHook()', 1)[1].split(
             '__asm {', 1)[1].split('}', 1)[0]
         assembly = assembly.replace('CaptureSuperadminActorInput', '0x300800').replace(
@@ -4239,9 +6245,10 @@ int main() {
                 (8.999999046325684, 5, 0, 0, 0.037011224776506424, False, False, True, False))
         resources = (((0,0,0),(0,0,0)), ((10,0,0),(10,0,0)), ((0,1,1),(0,1,1)),
                      ((4,8,20),(0,2,5)), ((0,0,20),(99,99,0)))
-        for control_word, (initiative, speed, morale, luck, atb, selected, skip_speed, retaliation, blocked), maximum, current, half_speed in (
-                (control, inputs_case, maximum, current, half_speed) for control in (0x037f, 0x0c7f)
-                for inputs_case in inputs for maximum, current in resources for half_speed in (False, True)):
+        for control_word, (initiative, speed, morale, luck, atb, selected, skip_speed, retaliation, blocked), maximum, current, half_speed, runic_numerator, runic_denominator in (
+                (control, inputs_case, maximum, current, half_speed, numerator, denominator) for control in (0x037f, 0x0c7f)
+                for inputs_case in inputs for maximum, current in resources for half_speed in (False, True)
+                for numerator, denominator in ((0,0),(1,3),(3,3),(4,6))):
             with self.subTest(control_word=control_word, inputs=(initiative, speed, morale, luck, atb, selected)):
                 machine = Uc(UC_ARCH_X86, UC_MODE_32)
                 machine.mem_map(image_base, (executable.OPTIONAL_HEADER.SizeOfImage + 4095) & ~4095)
@@ -4281,8 +6288,13 @@ int main() {
                          'absent: xor eax, eax; ret 4')
                 machine.mem_write(0x2006000 + 0x28c * 16, bytes(keystone.Ks(
                     keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(flags, 0x2006000 + 0x28c * 16)[0]))
-                for address in (0x4e4920, 0xbfb3d0):
-                    machine.mem_write(address, b'\xd9\xee\xc3')
+                machine.mem_write(0x4e4920, b'\xd9\xee\xc3')
+                if runic_denominator:
+                    machine.mem_write(0x2017000,struct.pack('<2i',runic_numerator,runic_denominator))
+                    rune_code='fild dword ptr [0x2017000]; fidiv dword ptr [0x2017004]; fstp dword ptr [0x2017010]; fld dword ptr [0x2017010]; ret'
+                    machine.mem_write(0xbfb3d0,bytes(assembler.asm(rune_code,0xbfb3d0)[0]))
+                else:
+                    machine.mem_write(0xbfb3d0, b'\xd9\xee\xc3')
                 machine.mem_write(stop, b'\xd9\x1d' + struct.pack('<I', output))
                 machine.mem_write(stack, struct.pack('<3I', stop, actor, actor if selected else 0))
                 machine.reg_write(UC_X86_REG_ESP, stack)
@@ -4301,6 +6313,8 @@ int main() {
                     expected *= 0.95 + min(1, max(0, atb)) * 0.1
                 for resource_maximum, resource_current in zip(maximum,current):
                     if resource_maximum>0: expected *= 1+0.1*resource_current/resource_maximum
+                if runic_denominator:
+                    expected *= 1+0.1*runic_numerator/runic_denominator
                 if retaliation and not blocked:
                     expected *= 1.100000023841858
                 self.assertAlmostEqual(actual, min(13, max(0, expected)), places=4)
@@ -4310,10 +6324,10 @@ int main() {
                 compiled_cases.append('{ ' + str(control_word) + ', {' + ','.join((str(morale), str(luck), str(speed),
                     repr(float(initiative)) + 'f', repr(float(atb)) + 'f',
                     str(skip_speed).lower(), str(selected).lower(), str(retaliation and not blocked).lower()))
-                    + ', {'+','.join(map(str,maximum))+'}, {'+','.join(map(str,current))+'}, '+str(half_speed).lower()+'}, '
+                    + ', {'+','.join(map(str,maximum))+'}, {'+','.join(map(str,current))+'}, '+str(half_speed).lower()+','+str(runic_numerator)+','+str(runic_denominator)+'}, '
                     + str(struct.unpack('<I', machine.mem_read(output, 4))[0]) + 'u }')
 
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
             'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
@@ -4398,7 +6412,7 @@ int main() {
             self.assertEqual(raw[24:40], bytes(16))
             self.assertEqual(raw[64:72], bytes(8))
             expected.append((raw, sums))
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
             'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
@@ -4460,14 +6474,43 @@ int main() {
                     scale=struct.unpack('<2I',executable.get_data((0xe72bf8 if alternative else 0xe87cf8)-base,8))
                     flags=0 if not active else 3 if alternative else 1
                     cases.append(f'{{{control},{health},{flags},{{{scale[0]}u,{scale[1]}u}},{expected}u}}')
-        source=(MOD_ROOT/'src/preview_plugin.cpp').read_text()
+        # Execute the original protection branch. Substitute only its combat
+        # state getter; its cap/division/truncation/addition remain game code.
+        protection_cases=[]
+        code=bytes(assembler.asm('xor eax,eax; ret 4',0x20040c0)[0])
+        cpu.mem_write(0x20040c0,code);cpu.ctl_remove_cache(0x20040c0,0x20040c0+len(code))
+        for control in (0x037f,0x0c7f):
+            for health in (0,1,42,260,2147483647,-17):
+                for capacity in (0,1,56,1000):
+                    for fraction in (0.0,0.5,0.99,1.0):
+                        bits=struct.unpack('<I',struct.pack('<f',fraction))[0]
+                        code=bytes(assembler.asm(f'mov dword ptr [edx],{bits}; mov eax,[esp+4]; '
+                            f'mov dword ptr [eax],{capacity}; ret 4',0xa5b780)[0])
+                        cpu.mem_write(0xa5b780,code);cpu.ctl_remove_cache(0xa5b780,0xa5b780+len(code))
+                        cpu.mem_write(0x2008000,bytes(80));cpu.mem_write(0x2008024,struct.pack('<i',health))
+                        cpu.reg_write(UC_X86_REG_ESP,0x2008000);cpu.reg_write(UC_X86_REG_ESI,0x2001000)
+                        cpu.reg_write(UC_X86_REG_EBP,health);cpu.reg_write(UC_X86_REG_FPCW,control)
+                        cpu.emu_start(0xbfbcf3,0xbfbdb8,count=1000)
+                        self.assertEqual(cpu.reg_read(UC_X86_REG_FPCW),control)
+                        expected=cpu.reg_read(UC_X86_REG_EBP)
+                        protection_cases.append(f'{{{control},{health},{capacity},{bits}u,{expected}u}}')
+        source=preview_source()
         implementation='struct PlacementAggregate {'+source.split('struct PlacementAggregate {',1)[1].split('void CaptureKnownHeroModifiers(',1)[0]
-        driver='#include <cstdint>\n#include <cstring>\n#include <cassert>\n'+implementation
+        driver='#include <cstdint>\n#include <cstring>\n#include <cassert>\n#include <cstdio>\n'+implementation
         driver+='int main(){ struct Case {unsigned short control; int32_t health; uint32_t flags,scale[2],expected;};'
         driver+='const Case cases[]={'+','.join(cases)+'};'
         driver+=('for(const auto& item:cases){unsigned short control=item.control; __asm {fldcw control}'
                  'uint32_t result=static_cast<uint32_t>(TransformPlacementHealth(item.health,item.flags,item.scale));'
                  'assert(result==item.expected); unsigned short restored; __asm {fnstcw restored}'
+                 'assert(restored==control);}')
+        driver+='struct ProtectionCase {unsigned short control; int32_t health,capacity; uint32_t fraction,expected;};'
+        driver+='const ProtectionCase protection[]={'+','.join(protection_cases)+'};'
+        driver+=('for(const auto& item:protection){unsigned short control=item.control; __asm {fldcw control}'
+                 'float fraction; memcpy(&fraction,&item.fraction,4);'
+                 'uint32_t result=static_cast<uint32_t>(TransformPlacementProtection(item.health,item.capacity,fraction));'
+                 'if(result!=item.expected){fprintf(stderr,"control=%x health=%d capacity=%d fraction=%x actual=%u expected=%u",'
+                 'control,item.health,item.capacity,item.fraction,result,item.expected);return 1;}'
+                 'unsigned short restored; __asm {fnstcw restored}'
                  'assert(restored==control);} return 0;}')
         with tempfile.TemporaryDirectory(prefix='workshop-health-scale-') as directory:
             temporary=Path(directory);(temporary/'scale.cpp').write_text(driver,encoding='utf-8')
@@ -4538,7 +6581,7 @@ int main() {
             self.assertEqual(raw[:24], bytes(24))
             self.assertEqual(raw[40:], bytes(32))
             expected.append((raw, sums))
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
             'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
@@ -4598,7 +6641,7 @@ int main() {
         weights = bytes(machine.mem_read(machine.reg_read(UC_X86_REG_ESP) + 0x2c, 28))
         self.assertEqual(struct.unpack('<f', weights[4:8])[0], 1.0)
         self.assertEqual(struct.unpack('<f', raw[20:24])[0], 1.0)
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
             'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
@@ -4672,7 +6715,7 @@ int main() {
                 words = struct.unpack('<' + str(len(data) // 4) + 'I', data)
                 encoded.append('{' + ','.join(str(value) + 'u' for value in words) + '}')
             cases.append('{' + str(control_word) + ',' + ','.join(encoded) + '}')
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
             'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
@@ -4968,11 +7011,12 @@ int main() {
 
     @unittest.skipIf(keystone is None, 'Optional keystone assembler is not installed')
     def test_projection_tooltip_hit_test_preserves_other_windows_and_callers(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         assembly = source.split('void ProjectionTooltipHitTestHook()', 1)[1].split('__asm {', 1)[1].split('}', 1)[0]
         assembly = re.sub(r'//[^\n]*', '', assembly).replace('g_outputStorage', '0x303000')
         assembly = assembly.replace('g_fpu', '0x30a000').replace('AttachProjectionTooltipProvider', '0x30b000')
         assembly = assembly.replace('g_detailsHitTest', '0x30c000').replace('g_tooltipController', '0x30c004')
+        assembly = assembly.replace('ProjectionTooltipWindowIsDecoration', '0x30d000')
         code = bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(assembly, addr=0x300000)[0])
         cases = [
             ('deployment title', 0xe2ff58, 3, 65, 0x6b8aad, 0, True),
@@ -4996,6 +7040,16 @@ int main() {
                 machine.mem_map(0x300000, 65536)
                 machine.mem_map(0xa4e000, 4096)
                 machine.mem_write(0x300000, code)
+                # Production decoration policy has its own direct C++ tests;
+                # this boundary verifies hook routing, arguments and state.
+                decoration = ('mov eax,[esp+4]; cmp dword ptr [eax],0xe2ff58; je yes; '
+                              'cmp dword ptr [eax],0xe73c70; jne no; mov edx,[esp+8]; '
+                              'cmp byte ptr [0x30c000],0; je controller_ready; mov edx,[0x30c004]; '
+                              'controller_ready: test edx,edx; jz no; mov edx,[edx+0x44]; '
+                              'test edx,edx; jz no; mov edx,[edx+8]; sub edx,0x130; cmp eax,edx; jne no; '
+                              'yes: mov eax,1; ret 8; no: xor eax,eax; ret 8')
+                machine.mem_write(0x30d000,bytes(keystone.Ks(keystone.KS_ARCH_X86,keystone.KS_MODE_32).asm(
+                    decoration,addr=0x30d000)[0]))
                 machine.mem_write(0x30b000, bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(
                     'mov eax, [esp+4]; mov [0x30b100], eax; ret 4', addr=0x30b000)[0]))
                 machine.mem_write(0x303008 + 496, struct.pack('<I', models))
@@ -5022,7 +7076,7 @@ int main() {
                 self.assertEqual(attached, 0x308000 if models and hovered and caller == 0x6b8aad else 0)
 
     def test_native_solo_placement_uses_center_then_free_columns_and_rows(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
+        source = preview_source()
         assembly = source.split('        // 0x857380, one assumed unsplit defender:', 1)[1].split('    rank_row:', 1)[0]
         assembly = '// 0x857380, one assumed unsplit defender:' + assembly
         assembly += '\nrank_row: xor eax, eax\njmp 0x306000\ncell_selected: mov eax, 1\njmp 0x306000\nfootprint_free:'
@@ -5062,69 +7116,85 @@ int main() {
 
     @unittest.skipIf(keystone is None, 'Optional keystone assembler is not installed')
     def test_native_outline_tracks_full_hovered_square_and_preserves_stock_frame(self):
-        source = (MOD_ROOT / 'src/preview_plugin.cpp').read_text()
-        assembly = source.split('void ProjectionOutlineHook()', 1)[1].split('__asm {', 1)[1].split('}', 1)[0]
-        assembly = '\n'.join(line.split('//', 1)[0] for line in assembly.splitlines())
-        for symbol, address in {'g_placementOwner': '0x303000', 'g_hoverX': '0x303010',
-                                'g_hoverY': '0x303014', 'g_cell': '0x303200', 'g_outputStorage': '0x304000',
-                                'g_fpu': '0x305000', 'UpdateProjectionRange': '0x306000',
-                                'UpdateProjectionGlows': '0x307000', 'ProcessProjectionDetails': '0x308000'}.items():
-            assembly = assembly.replace(symbol, address)
-        code = bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(assembly, addr=0x300000)[0])
-        unchanged = (91, 92, 93, 94)
-        cases = [(12, 3, 65, 2, True, (11, 3, 12, 2))]
-        cases += [(x, y, 65, 2, True, (11, 6, 13, 4)) for x in (12, 13) for y in (5, 6)]
-        cases += [(11, 5, 65, 2, True, unchanged), (14, 6, 65, 2, True, unchanged),
-                  (12, 5, 0, 2, True, unchanged), (12, 5, 65, 0, True, unchanged),
-                  (12, 5, 65, 2, False, unchanged)]
-        for x, y, hovered, count, same_owner, expected in cases:
-            with self.subTest(cell=(x, y), hovered=hovered, count=count, same_owner=same_owner):
-                machine = Uc(UC_ARCH_X86, UC_MODE_32)
-                machine.mem_map(0x200000, 65536)
-                machine.mem_map(0x300000, 65536)
-                machine.mem_write(0x300000, code)
-                # Native bridge boundary: record its ABI independently of the
-                # pure path algorithm below; live tests cover allocator/rendering.
-                bridge = bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(
-                    'mov eax, [esp+4]; mov [0x306100], eax; mov eax, [esp+8]; mov [0x306104], eax; '
-                    'inc dword ptr [0x306108]; xor eax, eax; xor ecx, ecx; xor edx, edx; ret 8', addr=0x306000)[0])
-                machine.mem_write(0x306000, bridge)
-                machine.mem_write(0x307000, b'\xc3')
-                machine.mem_write(0x308000, b'\xc3')
-                machine.mem_write(0x303000, struct.pack('<I', 0x205000 if same_owner else 0x206000))
-                machine.mem_write(0x303010, struct.pack('<II', x, y))
-                machine.mem_write(0x303200, struct.pack('<4I', 12, 3, 13, 6))
-                machine.mem_write(0x304008 + 496, struct.pack('<I', count))
-                machine.mem_write(0x304008 + 504, struct.pack('<I', hovered))
-                machine.mem_write(0x304008 + 600, struct.pack('<2I', 1, 2))
-                machine.mem_write(0x304008 + 640, struct.pack('<2I', 65, 65))
-                machine.mem_write(0x20503c, struct.pack('<2I', 0x123, 0x456))
-                machine.mem_write(0x208080, b'\xa5' * 48)
-                machine.mem_write(0x208090, struct.pack('<4I', *unchanged))
-                machine.reg_write(UC_X86_REG_ESP, 0x208000)
-                machine.reg_write(UC_X86_REG_ESI, 0x205000)
-                machine.reg_write(UC_X86_REG_EBX, 0x987)
-                machine.reg_write(UC_X86_REG_EFLAGS, 0x246)
-                machine.emu_start(0x300000, 0x57898c, count=1000)
-                self.assertEqual(struct.unpack('<4I', machine.mem_read(0x208090, 16)), expected)
-                self.assertEqual(bytes(machine.mem_read(0x208080, 16)), b'\xa5' * 16)
-                self.assertEqual(bytes(machine.mem_read(0x2080a0, 16)), b'\xa5' * 16)
-                self.assertEqual(machine.reg_read(UC_X86_REG_ESP), 0x208000)
-                self.assertEqual(machine.reg_read(UC_X86_REG_ESI), 0x205000)
-                self.assertEqual(machine.reg_read(UC_X86_REG_EBX), 0x987)
-                self.assertEqual(machine.reg_read(UC_X86_REG_EFLAGS), 0x246)
-                self.assertEqual(machine.reg_read(UC_X86_REG_EAX), 0x123)
-                self.assertEqual(machine.reg_read(UC_X86_REG_EDX), 0x456)
-                slot, frame, calls = struct.unpack('<3I', machine.mem_read(0x306100, 12))
-                self.assertEqual(calls, int(expected != unchanged))
-                if calls:
-                    self.assertEqual(frame, 0x208040)
-                    self.assertEqual(slot, 0 if (x, y) == (12, 3) else 1)
+        source = preview_source()
+        hovered = 'int HoveredProjectionSlot() {' + source.split('int HoveredProjectionSlot() {', 1)[1].split('unsigned PublicTooltipVariants(', 1)[0]
+        outline = 'void __stdcall ApplyProjectionOutline(' + source.split('void __stdcall ApplyProjectionOutline(', 1)[1].split('__declspec(naked) void ProjectionOutlineHook()', 1)[0]
+        driver = r'''
+#include <windows.h>
+#include <cstdint>
+#include <cstring>
+#include <cassert>
+void* g_placementOwner=reinterpret_cast<void*>(0x205000);
+uint32_t g_hoverX=0,g_hoverY=0;
+int g_cell[14]{12,3,13,6};
+unsigned char g_outputStorage[4104]{};
+unsigned rangeCalls=0,rangeSlot=99,glowCalls=0,detailsCalls=0;
+uint32_t* rangeHighlight=nullptr;
+void UpdateProjectionGlows() { ++glowCalls; }
+void ProcessProjectionDetails() { ++detailsCalls; }
+void UpdateProjectionRange(unsigned slot,uint32_t* highlight) { ++rangeCalls;rangeSlot=slot;rangeHighlight=highlight; }
+''' + hovered + outline + r'''
+int main() {
+    struct Case { uint32_t x,y,hovered,count; bool owned; int bounds[4]; int slot; };
+    const Case cases[]={
+        {12,3,65,2,true,{11,3,12,2},0},
+        {12,5,65,2,true,{11,6,13,4},1}, {13,5,65,2,true,{11,6,13,4},1},
+        {12,6,65,2,true,{11,6,13,4},1}, {13,6,65,2,true,{11,6,13,4},1},
+        {11,5,65,2,true,{91,92,93,94},-1}, {14,6,65,2,true,{91,92,93,94},-1},
+        {12,5,0,2,true,{91,92,93,94},-1}, {12,5,65,0,true,{91,92,93,94},-1},
+        {12,5,65,2,false,{91,92,93,94},-1}
+    };
+    for(const auto& item:cases) {
+        g_hoverX=item.x;g_hoverY=item.y;
+        *reinterpret_cast<uint32_t*>(g_outputStorage+8+496)=item.count;
+        *reinterpret_cast<uint32_t*>(g_outputStorage+8+504)=item.hovered;
+        *reinterpret_cast<uint32_t*>(g_outputStorage+8+600)=1;
+        *reinterpret_cast<uint32_t*>(g_outputStorage+8+604)=2;
+        *reinterpret_cast<uint32_t*>(g_outputStorage+8+640)=65;
+        *reinterpret_cast<uint32_t*>(g_outputStorage+8+644)=65;
+        int frame[12];for(auto& value:frame)value=0x55aa55aa;
+        int* bounds=frame+4;bounds[0]=91;bounds[1]=92;bounds[2]=93;bounds[3]=94;
+        uint32_t highlight[4]{};rangeCalls=glowCalls=detailsCalls=0;
+        ApplyProjectionOutline(item.owned ? 0x205000 : 0x206000,highlight,bounds,true);
+        assert(memcmp(bounds,item.bounds,sizeof(item.bounds))==0);
+        for(int index=0;index<4;++index)assert(frame[index]==0x55aa55aa && frame[index+8]==0x55aa55aa);
+        assert(rangeCalls==(item.slot>=0 ? 1u : 0u));
+        assert(glowCalls==(item.owned ? 1u : 0u) && detailsCalls==glowCalls);
+        if(rangeCalls)assert(rangeSlot==static_cast<unsigned>(item.slot) && rangeHighlight==highlight);
+    }
+}
+'''
+        with tempfile.TemporaryDirectory(prefix='workshop-outline-') as directory:
+            folder=Path(directory);(folder/'outline.cpp').write_text(driver,encoding='utf-8')
+            (folder/'build.cmd').write_text(f'@call "{vcvarsall()}" x86 >nul\n@if errorlevel 1 exit /b 1\n@cl /nologo /EHsc /O2 /std:c++20 /Fe:outline.exe outline.cpp\n',encoding='utf-8')
+            built=subprocess.run(['cmd','/d','/c',str(folder/'build.cmd')],cwd=folder,capture_output=True)
+            self.assertEqual(built.returncode,0,built.stdout.decode(errors='replace')+built.stderr.decode(errors='replace'))
+            checked=subprocess.run([str(folder/'outline.exe')],capture_output=True)
+            self.assertEqual(checked.returncode,0,checked.stderr.decode(errors='replace'))
+        assembly=source.split('void ProjectionOutlineHook()',1)[1].split('__asm {',1)[1].split('}',1)[0]
+        assembly='\n'.join(line.split('//',1)[0] for line in assembly.splitlines()).replace('ApplyProjectionOutline','0x309000')
+        code=bytes(keystone.Ks(keystone.KS_ARCH_X86,keystone.KS_MODE_32).asm(assembly,addr=0x300000)[0])
+        machine=Uc(UC_ARCH_X86,UC_MODE_32);machine.mem_map(0x200000,65536);machine.mem_map(0x300000,65536)
+        machine.mem_write(0x300000,code)
+        boundary='mov eax,[esp+4]; mov [0x309100],eax; mov eax,[esp+8]; mov [0x309104],eax; mov eax,[esp+12]; mov [0x309108],eax; mov eax,[esp+16]; mov [0x30910c],eax; xor eax,eax; xor ecx,ecx; xor edx,edx; ret 16'
+        machine.mem_write(0x309000,bytes(keystone.Ks(keystone.KS_ARCH_X86,keystone.KS_MODE_32).asm(boundary,addr=0x309000)[0]))
+        machine.mem_write(0x20503c,struct.pack('<2I',0x123,0x456))
+        machine.reg_write(UC_X86_REG_ESP,0x208000);machine.reg_write(UC_X86_REG_ESI,0x205000)
+        machine.reg_write(UC_X86_REG_EBX,0x987);machine.reg_write(UC_X86_REG_EFLAGS,0x246)
+        machine.emu_start(0x300000,0x57898c,count=1000)
+        self.assertEqual(struct.unpack('<4I',machine.mem_read(0x309100,16)),(0x205000,0x208040,0x208090,1))
+        self.assertEqual(machine.reg_read(UC_X86_REG_ESP),0x208000)
+        self.assertEqual(machine.reg_read(UC_X86_REG_ESI),0x205000)
+        self.assertEqual(machine.reg_read(UC_X86_REG_EBX),0x987)
+        self.assertEqual(machine.reg_read(UC_X86_REG_EFLAGS),0x246)
+        self.assertEqual(machine.reg_read(UC_X86_REG_EAX),0x123)
+        self.assertEqual(machine.reg_read(UC_X86_REG_EDX),0x456)
 
         # Check the renderer ABI too: the opposite-facing angle must not depend
         # on the address of the native model root (which changes each launch).
-        assembly = source.split('        mov eax, dword ptr [esp + 56]', 1)[1].split('        mov dword ptr [g_root], edi', 1)[0]
-        assembly = 'mov eax, dword ptr [esp + 56]\n' + assembly
+        renderer = source.split('void __stdcall RenderPlacementModels(', 1)[1]
+        assembly = renderer.split('        mov eax, dword ptr [esp + 44]', 1)[1].split('        mov dword ptr [g_root], edi', 1)[0]
+        assembly = 'mov eax, dword ptr [esp + 44]\n' + assembly
         assembly = '\n'.join(line.split('//', 1)[0] for line in assembly.splitlines())
         for symbol, address in {'g_rendererRootArgument': '0x303000',
                                 'g_rendererFactoryArgument': '0x303004',
@@ -5138,7 +7208,7 @@ int main() {
                 machine.mem_map(0x300000, 65536)
                 machine.mem_write(0x300000, code)
                 machine.reg_write(UC_X86_REG_ESP, 0x208000)
-                machine.mem_write(0x208038, struct.pack('<5I', address, 0, angle, 2, 0x9876))
+                machine.mem_write(0x20802c, struct.pack('<3I', address, 0x9876, angle))
                 machine.emu_start(0x300000, 0x300000 + len(code), count=100)
                 self.assertEqual(struct.unpack('<I', machine.mem_read(0x304008 + 760, 4))[0], angle + 180)
                 self.assertEqual(struct.unpack('<2I', machine.mem_read(0x303000, 8)), (address, 0x9876))

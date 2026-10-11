@@ -7,6 +7,55 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def verify_policy_decisions(report):
+    """Compare original decisions by source army and observed evaluation lifetime."""
+    if (report['generation'] != report['strategy_generation'] or report['failures'] or report['overflow']
+            or report['strategy_mask'] != 3):
+        raise ValueError('Strategy comparison requires complete matching-generation observations')
+    armies = report['army_identities']
+    strategies = report['strategies']
+    if len(armies) != 2 or not all(armies) or armies[0] == armies[1] or len(strategies) != 2:
+        raise ValueError('Expected two distinct captured army identities and strategies')
+    if any(value not in (0, 1) for value in strategies):
+        raise ValueError('Invalid captured strategy value')
+    events = report['events']
+    decisions = []
+    block_start = 0
+    for index, event in enumerate(events):
+        if event['kind'] != 'decision':
+            continue
+        block = events[block_start:index]
+        sources = [item for item in block if item['kind'] == 'capability_input']
+        returns = [item for item in block if item['kind'] == 'capability_result']
+        if (len(sources) != 1 or len(returns) != 1 or sources[0]['army_identity'] not in armies
+                or block.index(sources[0]) >= block.index(returns[0])
+                or not event['evaluation_identity'] or returns[0]['evaluation_identity'] != event['evaluation_identity']
+                or event['defensive'] not in (0, 1)):
+            raise ValueError('Original decision has no unique captured source army')
+        army_index = armies.index(sources[0]['army_identity'])
+        decisions.append({'event_index': index, 'evaluation_identity': event['evaluation_identity'],
+                          'army_index': army_index, 'native': event['defensive'], 'own': strategies[army_index],
+                          'matches': event['defensive'] == strategies[army_index]})
+        block_start = index + 1
+    if not decisions:
+        raise ValueError('No original strategy decisions captured')
+    policies = []
+    for policy in report['policies']:
+        fence = policy['events_seen']
+        if not isinstance(fence, int) or not 0 <= fence <= len(events):
+            raise ValueError('Policy observation has an invalid event boundary')
+        candidates = [decision for decision in decisions if decision['event_index'] < fence
+                      and decision['evaluation_identity'] == policy['evaluation_identity']]
+        if len(candidates) != 1 or candidates[0]['native'] != policy['defensive']:
+            raise ValueError('Policy observation is not aligned with one original decision')
+        policies.append({'policy_label': policy['side'], 'army_index': candidates[0]['army_index'],
+                         'native': policy['defensive'], 'matches': candidates[0]['matches']})
+    if not policies:
+        raise ValueError('No policy observations aligned')
+    return {'ok': all(decision['matches'] for decision in decisions), 'decisions': decisions,
+            'policies': policies, 'scope': 'decision flags with verified source/lifetime alignment',
+            'goal_complete': False}
+
 def verify_admin_data(report, expected_packs):
     from collections import Counter
     from datetime import datetime

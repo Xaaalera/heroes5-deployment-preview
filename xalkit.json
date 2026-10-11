@@ -1,0 +1,7 @@
+{
+  "kind": "native",
+  "display_name": {"ru": "Предиктор расстановки", "en": "Deployment predictor"},
+  "category": "mod",
+  "display_event": false,
+  "native_sources": ["src/preview_sdk.cpp"]
+}
