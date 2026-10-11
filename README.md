@@ -28,6 +28,8 @@ The website owns the living instructions. Each mod installs independently with i
 
 ## Standalone use / Работа вне мастерской
 
+Закреплённые зависимости / Pinned dependencies: [xkit `9966257`](https://github.com/Xaaalera/heroes5-mod-devkit/tree/996625728df1d6965005a858e3058a82def2f28b) · [Game API `256f8be`](https://github.com/Xaaalera/heroes5-game-api/tree/256f8be968c27c3c591adb77867979ef6e2ba0f0).
+
 После клонирования выполни `git submodule update --init`. Глобальная мастерская не обязательна. Если ветка объявляет корневую `game-api`, путь `devkit/game-api` должен ссылаться на неё, а не содержать вторую копию; версии должны соответствовать закреплённым коммитам. Различия старых веток описаны в инструкции самостоятельного клона на сайте. В общей мастерской зависимости проверяет её `sync-subrepos`. Рабочие правила — в [AGENTS.md](AGENTS.md).
 
 After cloning, run `git submodule update --init`. The global workshop is optional. Where the branch declares a root `game-api`, `devkit/game-api` must reference that checkout with consistent pins. The site's standalone-clone guide explains older branches; shared workshop checkouts use its canonical dependency synchronization.
