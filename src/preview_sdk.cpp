@@ -576,133 +576,145 @@ void UpdatePublicProjections(uint32_t command, const heroes5_sdk::EngineContext&
     alignas(16) unsigned char floatingState[512];
     __asm { lea eax, floatingState }
     __asm { fxsave [eax] }
-    if (command == 3) {
-        state.Release();
-        ++g_attackGeneration;
-        ConfigureResearchMode();
-        const bool displayFull = g_superadminEnabled;
-        g_superadminEnabled = true;
-        ResetSuperadminInputCapture();
-        CaptureSuperadminSource(nullptr);
-        const uint32_t source = context.registers.eax;
-        bool publicMonster = false;
-        __try {
-            publicMonster = source != 0 && *reinterpret_cast<const uint32_t*>(source) == 0xe18f7c;
-        } __except (EXCEPTION_EXECUTE_HANDLER) { publicMonster = false; }
-        if (publicMonster) {
-            __asm { mov eax, source }
-            __asm { call CapturePublicPortraits }
-        }
-        state.research.Save(); state.research.enabled = displayFull;
-        if (!displayFull) {
-            PublicPlannerState publicCapture{};
-            publicCapture.neutralTypesUnknown = g_neutralTypesUnknown;
-            memcpy(publicCapture.publicKnownCounts, g_publicKnownCounts, sizeof(g_publicKnownCounts));
-            memcpy(publicCapture.publicQuantityLabels, g_publicQuantityLabels, sizeof(g_publicQuantityLabels));
-            publicCapture.Load();
-        }
-    } else if (command == 6) {
-        state.Release();
-        // Public portraits were captured at attack, before placement exists.
-        g_publicCount = state.publicCount;
-        memcpy(g_publicTypes, state.publicTypes, sizeof(g_publicTypes));
-        memcpy(g_publicBands, state.publicBands, sizeof(g_publicBands));
-        ++g_placementGeneration;
-        if (g_superadminSourceCount > 0) { g_superadminSourceGeneration = g_placementGeneration; }
-        if (state.research.version == 3 && state.research.superadminSourceCount > 0) {
-            state.research.superadminSourceGeneration = g_placementGeneration;
-        }
-        g_predictionExcludedMask = 0;g_plannedProjectionCount = 0;g_projectionPlanning = false;
-        g_renderedGeneration = -1;
-        g_placementOwner = reinterpret_cast<void*>(context.registers.ecx);
-    } else if (command == 4 && context.registers.edi == reinterpret_cast<uint32_t>(g_placementOwner)) {
-        uint32_t arguments[10]{};
-        bool valid = false;
-        __try {
-            memcpy(arguments, reinterpret_cast<const void*>(context.registers.savedEsp + 4), sizeof(arguments));
-            valid = arguments[0] == h5::hooks::PlacementRendererCaller;
-        } __except (EXCEPTION_EXECUTE_HANDLER) { valid = false; }
-        if (valid) {
-            if (!g_superadminEnabled && !g_neutralTypesUnknown) {
-                ApplyScoutedSource(state.research, static_cast<const uint32_t*>(g_placementOwner));
-            }
-            auto& verification = *reinterpret_cast<PostStartVerification*>(context.residentData + PostStartVerificationOffset);
-            if (!g_superadminEnabled && g_renderedGeneration != g_placementGeneration &&
-                (verification.referenceAttackGeneration != static_cast<uint32_t>(g_attackGeneration) ||
-                 verification.referenceTrace.placementGeneration != static_cast<uint32_t>(g_placementGeneration))) {
-                h5_preview::PlacementDecisionTrace decisions{};
-                h5_preview::PlacementFieldSnapshot field{};
-                const bool complete = PlanReferencePlacement(state.research, context.registers.edi,
-                    arguments[5], arguments[9], arguments[7], decisions, &field);
-                InterlockedIncrement(&verification.sequence);
-                verification.referenceAttackGeneration = g_attackGeneration;
-                verification.referenceTrace = complete ? decisions : h5_preview::PlacementDecisionTrace{};
-                verification.referenceTrace.placementGeneration = g_placementGeneration;
-                verification.playerField = complete ? field : h5_preview::PlacementFieldSnapshot{};
-                InterlockedIncrement(&verification.sequence);
-                state.research.actorInputsFrozen = true;
-            }
-            RenderPlacementPreview(context.registers.edi, arguments[0], arguments[5], arguments[9], arguments[7]);
-            if (!g_superadminEnabled) {
-                InterlockedIncrement(&verification.sequence);
-                CopyRenderedQuantityLabels(verification.playerQuantityLabels);
-                InterlockedIncrement(&verification.sequence);
-            }
-        }
-    } else if (command == 5) {
-        __try {
-            const auto* stack=reinterpret_cast<const uint32_t*>(context.registers.savedEsp+4);
-            auto* screen=reinterpret_cast<uint32_t*>(context.registers.esi);
-            if (stack[0]==0x54589e && screen && *screen==0xe1da84 &&
-                screen[0x488/4]==reinterpret_cast<uint32_t>(g_placementOwner)) { g_projectionScreen=screen; }
-        } __except (EXCEPTION_EXECUTE_HANDLER) { }
-        int coordinates[2]{};
-        bool valid = false;
-        __try {
-            const auto* cell = *reinterpret_cast<const int* const*>(context.registers.savedEsp + 12);
-            if (cell) {
-                coordinates[0] = cell[0];coordinates[1] = cell[1];
-                valid = coordinates[0] >= 0 && coordinates[0] < 32 && coordinates[1] >= 0 && coordinates[1] < 32;
-            }
-        } __except (EXCEPTION_EXECUTE_HANDLER) { valid = false; }
-        // The original hover handler clears selection even without a valid cell.
-        UpdatePlacementHover(context.registers.edx, valid ? coordinates : nullptr);
-    } else if (command == 16 && context.registers.esi == reinterpret_cast<uint32_t>(g_placementOwner)) {
-        if (g_detailsSlot>=0 && !g_detailsNativeMethods) {
+    auto& verification = *reinterpret_cast<PostStartVerification*>(context.residentData + PostStartVerificationOffset);
+    bool published = false;
+    // Publish the private reference, ordinary renderer and saved public bytes
+    // as one transaction. A reference alone does not mean the forecast is ready;
+    // an unavailable ordinary forecast is still a valid completed publication.
+    InterlockedIncrement(&verification.sequence);
+    __try {
+        if (command == 3) {
+            state.Release();
+            ++g_attackGeneration;
+            ConfigureResearchMode();
+            const bool displayFull = g_superadminEnabled;
+            g_superadminEnabled = true;
+            ResetSuperadminInputCapture();
+            CaptureSuperadminSource(nullptr);
+            const uint32_t source = context.registers.eax;
+            bool publicMonster = false;
             __try {
-                MEMORY_BASIC_INFORMATION methodsRegion{},codeRegion{};
-                auto* methods=reinterpret_cast<uint32_t*>(context.residentData+DetailsNativeMethodsOffset);
-                const uint32_t emptyMethods[16]{};
-                const auto& available=h5::hooks::DetailsRotationAvailable;
-                const auto image=GetModuleHandleW(nullptr);
-                DWORD process=0;
-                if (GetWindowThreadProcessId(context.window,&process)==GetCurrentThreadId() && process==GetCurrentProcessId() &&
-                    VirtualQuery(reinterpret_cast<const void*>(0xe40468),&methodsRegion,sizeof(methodsRegion)) &&
-                    methodsRegion.AllocationBase==image && methodsRegion.Type==MEM_IMAGE && methodsRegion.State==MEM_COMMIT &&
-                    VirtualQuery(reinterpret_cast<const void*>(available.address),&codeRegion,sizeof(codeRegion)) &&
-                    codeRegion.AllocationBase==image && codeRegion.Type==MEM_IMAGE && codeRegion.State==MEM_COMMIT &&
-                    !(codeRegion.Protect&PAGE_GUARD) &&
-                    (codeRegion.Protect&(PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) &&
-                    memcmp(reinterpret_cast<const void*>(available.address),available.expected,sizeof(available.expected))==0 &&
-                    memcmp(reinterpret_cast<const void*>(0xe40468),h5::hooks::DetailsRotatorMethods,sizeof(emptyMethods))==0 &&
-                    memcmp(methods,emptyMethods,sizeof(emptyMethods))==0) {
-                    memcpy(methods,h5::hooks::DetailsRotatorMethods,sizeof(emptyMethods));
-                    methods[5]=available.address;MemoryBarrier();g_detailsNativeMethods=methods+1;
+                publicMonster = source != 0 && *reinterpret_cast<const uint32_t*>(source) == 0xe18f7c;
+            } __except (EXCEPTION_EXECUTE_HANDLER) { publicMonster = false; }
+            if (publicMonster) {
+                __asm { mov eax, source }
+                __asm { call CapturePublicPortraits }
+            }
+            state.research.Save(); state.research.enabled = displayFull;
+            if (!displayFull) {
+                PublicPlannerState publicCapture{};
+                publicCapture.neutralTypesUnknown = g_neutralTypesUnknown;
+                memcpy(publicCapture.publicKnownCounts, g_publicKnownCounts, sizeof(g_publicKnownCounts));
+                memcpy(publicCapture.publicQuantityLabels, g_publicQuantityLabels, sizeof(g_publicQuantityLabels));
+                publicCapture.Load();
+            }
+        } else if (command == 6) {
+            state.Release();
+            // Public portraits were captured at attack, before placement exists.
+            g_publicCount = state.publicCount;
+            memcpy(g_publicTypes, state.publicTypes, sizeof(g_publicTypes));
+            memcpy(g_publicBands, state.publicBands, sizeof(g_publicBands));
+            ++g_placementGeneration;
+            if (g_superadminSourceCount > 0) { g_superadminSourceGeneration = g_placementGeneration; }
+            if (state.research.version == 3 && state.research.superadminSourceCount > 0) {
+                state.research.superadminSourceGeneration = g_placementGeneration;
+            }
+            g_predictionExcludedMask = 0;g_plannedProjectionCount = 0;g_projectionPlanning = false;
+            g_renderedGeneration = -1;
+            g_placementOwner = reinterpret_cast<void*>(context.registers.ecx);
+        } else if (command == 4 && context.registers.edi == reinterpret_cast<uint32_t>(g_placementOwner)) {
+            uint32_t arguments[10]{};
+            bool valid = false;
+            __try {
+                memcpy(arguments, reinterpret_cast<const void*>(context.registers.savedEsp + 4), sizeof(arguments));
+                valid = arguments[0] == h5::hooks::PlacementRendererCaller;
+            } __except (EXCEPTION_EXECUTE_HANDLER) { valid = false; }
+            if (valid) {
+                if (!g_superadminEnabled && !g_neutralTypesUnknown) {
+                    ApplyScoutedSource(state.research, static_cast<const uint32_t*>(g_placementOwner));
                 }
-            } __except (EXCEPTION_EXECUTE_HANDLER) { g_detailsNativeMethods=nullptr; }
+                if (!g_superadminEnabled && g_renderedGeneration != g_placementGeneration &&
+                    (verification.referenceAttackGeneration != static_cast<uint32_t>(g_attackGeneration) ||
+                     verification.referenceTrace.placementGeneration != static_cast<uint32_t>(g_placementGeneration))) {
+                    h5_preview::PlacementDecisionTrace decisions{};
+                    h5_preview::PlacementFieldSnapshot field{};
+                    const bool complete = PlanReferencePlacement(state.research, context.registers.edi,
+                        arguments[5], arguments[9], arguments[7], decisions, &field);
+                    verification.referenceAttackGeneration = g_attackGeneration;
+                    verification.referenceTrace = complete ? decisions : h5_preview::PlacementDecisionTrace{};
+                    verification.referenceTrace.placementGeneration = g_placementGeneration;
+                    verification.playerField = complete ? field : h5_preview::PlacementFieldSnapshot{};
+                    state.research.actorInputsFrozen = true;
+                }
+                RenderPlacementPreview(context.registers.edi, arguments[0], arguments[5], arguments[9], arguments[7]);
+                if (!g_superadminEnabled) {
+                    CopyRenderedQuantityLabels(verification.playerQuantityLabels);
+                }
+            }
+        } else if (command == 5) {
+            __try {
+                const auto* stack=reinterpret_cast<const uint32_t*>(context.registers.savedEsp+4);
+                auto* screen=reinterpret_cast<uint32_t*>(context.registers.esi);
+                if (stack[0]==0x54589e && screen && *screen==0xe1da84 &&
+                    screen[0x488/4]==reinterpret_cast<uint32_t>(g_placementOwner)) { g_projectionScreen=screen; }
+            } __except (EXCEPTION_EXECUTE_HANDLER) { }
+            int coordinates[2]{};
+            bool valid = false;
+            __try {
+                const auto* cell = *reinterpret_cast<const int* const*>(context.registers.savedEsp + 12);
+                if (cell) {
+                    coordinates[0] = cell[0];coordinates[1] = cell[1];
+                    valid = coordinates[0] >= 0 && coordinates[0] < 32 && coordinates[1] >= 0 && coordinates[1] < 32;
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) { valid = false; }
+            // The original hover handler clears selection even without a valid cell.
+            UpdatePlacementHover(context.registers.edx, valid ? coordinates : nullptr);
+        } else if (command == 16 && context.registers.esi == reinterpret_cast<uint32_t>(g_placementOwner)) {
+            if (g_detailsSlot>=0 && !g_detailsNativeMethods) {
+                __try {
+                    MEMORY_BASIC_INFORMATION methodsRegion{},codeRegion{};
+                    auto* methods=reinterpret_cast<uint32_t*>(context.residentData+DetailsNativeMethodsOffset);
+                    const uint32_t emptyMethods[16]{};
+                    const auto& available=h5::hooks::DetailsRotationAvailable;
+                    const auto image=GetModuleHandleW(nullptr);
+                    DWORD process=0;
+                    if (GetWindowThreadProcessId(context.window,&process)==GetCurrentThreadId() && process==GetCurrentProcessId() &&
+                        VirtualQuery(reinterpret_cast<const void*>(0xe40468),&methodsRegion,sizeof(methodsRegion)) &&
+                        methodsRegion.AllocationBase==image && methodsRegion.Type==MEM_IMAGE && methodsRegion.State==MEM_COMMIT &&
+                        VirtualQuery(reinterpret_cast<const void*>(available.address),&codeRegion,sizeof(codeRegion)) &&
+                        codeRegion.AllocationBase==image && codeRegion.Type==MEM_IMAGE && codeRegion.State==MEM_COMMIT &&
+                        !(codeRegion.Protect&PAGE_GUARD) &&
+                        (codeRegion.Protect&(PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) &&
+                        memcmp(reinterpret_cast<const void*>(available.address),available.expected,sizeof(available.expected))==0 &&
+                        memcmp(reinterpret_cast<const void*>(0xe40468),h5::hooks::DetailsRotatorMethods,sizeof(emptyMethods))==0 &&
+                        memcmp(methods,emptyMethods,sizeof(emptyMethods))==0) {
+                        memcpy(methods,h5::hooks::DetailsRotatorMethods,sizeof(emptyMethods));
+                        methods[5]=available.address;MemoryBarrier();g_detailsNativeMethods=methods+1;
+                    }
+                } __except (EXCEPTION_EXECUTE_HANDLER) { g_detailsNativeMethods=nullptr; }
+            }
+            ProcessProjectionDetails(false);
+            const auto stack = context.registers.savedEsp + 4;
+            ApplyProjectionOutline(context.registers.esi, reinterpret_cast<uint32_t*>(stack + 0x40),
+                reinterpret_cast<int*>(stack + 0x90), false);
+        } else if (command == 8 || (command == 7 && context.registers.ecx == reinterpret_cast<uint32_t>(g_placementOwner))) {
+            if (command == 8) { FreezeSuperadminInputCapture(); }
+            state.Release();
         }
-        ProcessProjectionDetails(false);
-        const auto stack = context.registers.savedEsp + 4;
-        ApplyProjectionOutline(context.registers.esi, reinterpret_cast<uint32_t*>(stack + 0x40),
-            reinterpret_cast<int*>(stack + 0x90), false);
-    } else if (command == 8 || (command == 7 && context.registers.ecx == reinterpret_cast<uint32_t>(g_placementOwner))) {
-        if (command == 8) { FreezeSuperadminInputCapture(); }
-        state.Release();
+        state.Save();
+        published = true;
+    } __finally {
+        if (!published) {
+            verification.referenceAttackGeneration = 0;
+            verification.referenceTrace = {};
+            verification.playerField = {};
+        }
+        __asm { lea eax, floatingState }
+        __asm { fxrstor [eax] }
+        active = false;
+        InterlockedIncrement(&verification.sequence);
     }
-    state.Save();
-    __asm { lea eax, floatingState }
-    __asm { fxrstor [eax] }
-    active = false;
+
 }
 
 bool HandlePreviewInterception(uint32_t command, heroes5_sdk::EngineInterceptionContext& borrowed) {

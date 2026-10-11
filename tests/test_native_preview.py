@@ -1538,7 +1538,41 @@ bool __fastcall WornArtifactContainsBoundary(const void* set,void*,int artifact)
     return set==&wornArtifactSet && artifact==12 && fixtureCrownWorn;
 }
 bool failReferenceRenderer=false;
+PostStartVerification* publicationVerification=nullptr;
+PublicProjectionState* publicationPublic=nullptr;
+const heroes5_sdk::EngineContext* publicationContext=nullptr;
+bool sawUnpublishedReference=false, failOrdinaryPublication=false;
+bool PublicationFault(const heroes5_sdk::EngineContext& context) {
+    bool failed=false;
+    __try { UpdatePublicProjections(4,context); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { failed=true; }
+    return failed;
+}
 void __stdcall ReferenceRendererBoundary(uint32_t,uint32_t,uint32_t,uint32_t) {
+    if(publicationVerification && !g_referenceCalculationActive) {
+        if(!(publicationVerification->sequence & 1) ||
+            publicationVerification->referenceTrace.complete!=1 ||
+            publicationVerification->playerField.version!=1 ||
+            publicationPublic->renderedGeneration==publicationPublic->placementGeneration) {
+            RaiseException(0xe0001237,0,0,nullptr);
+        }
+        const LONG sequence=publicationVerification->sequence;
+        UpdatePublicProjections(4,*publicationContext); // Reentry must not reopen the transaction.
+        if(publicationVerification->sequence!=sequence) { RaiseException(0xe0001238,0,0,nullptr); }
+        sawUnpublishedReference=true;
+        if(failOrdinaryPublication) { RaiseException(0xe0001239,0,0,nullptr); }
+        memset(g_outputStorage,0,sizeof(g_outputStorage));
+        *reinterpret_cast<uint32_t*>(g_outputStorage+8+384)=16;
+        *reinterpret_cast<uint32_t*>(g_outputStorage+8+388)=12;
+        *reinterpret_cast<uint32_t*>(g_outputStorage+8+524)=3;
+        *reinterpret_cast<uint32_t*>(g_outputStorage+8+496)=1;
+        g_publicCount=1;g_publicTypes[0]=3;g_publicBands[0]=5;g_publicKnownCounts[0]=0;
+        g_cell[0]=13;g_position[0]=4;g_renderedGeneration=g_placementGeneration;
+        return;
+    }
+    if(publicationVerification && !(publicationVerification->sequence & 1)) {
+        RaiseException(0xe000123a,0,0,nullptr);
+    }
     if(!g_superadminEnabled || !g_referenceCalculationActive ||
         *reinterpret_cast<uint32_t*>(g_outputStorage+8+1364)!=1) { RaiseException(0xe0001235,0,0,nullptr); }
     g_publicCount=7;g_publicTypes[0]=999;g_publicBands[0]=99;
@@ -1547,6 +1581,7 @@ void __stdcall ReferenceRendererBoundary(uint32_t,uint32_t,uint32_t,uint32_t) {
     memset(g_outputStorage,0x5a,sizeof(g_outputStorage));
     auto& trace=*reinterpret_cast<h5_preview::PlacementDecisionTrace*>(g_outputStorage+8+976);
     trace={};trace.version=1;trace.placementGeneration=g_placementGeneration;trace.count=1;trace.complete=1;
+    trace.records[0]={57,80,1,1,1,1,13,4,8,3,h5_preview::PlacementDecisionRule::RankedRow,0,0};
     auto* output=g_outputStorage+8;
     *reinterpret_cast<uint32_t*>(output+384)=16;
     *reinterpret_cast<uint32_t*>(output+388)=12;
@@ -1793,6 +1828,49 @@ int main() {
         assert(g_neutralTypesUnknown); // Full reference preserves public policy.
     }
     g_neutralTypesUnknown=false;
+    // A complete private reference must not make a pre-Start read eligible
+    // before the ordinary renderer and public Save finish. An even sequence
+    // publishes the entire snapshot, including the valid no-forecast case.
+    static unsigned char publicationResident[heroes5_sdk::ContextCapacity]{};
+    auto& publishedState=*reinterpret_cast<PublicProjectionState*>(publicationResident+PublicProjectionOffset);
+    auto& publishedVerification=*reinterpret_cast<PostStartVerification*>(publicationResident+PostStartVerificationOffset);
+    publishedState.version=1;publishedState.attackGeneration=referenceInputs.actorInputGeneration;
+    publishedState.placementGeneration=referenceInputs.superadminSourceGeneration;
+    publishedState.renderedGeneration=-1;publishedState.publicCount=1;
+    publishedState.publicTypes[0]=3;publishedState.publicBands[0]=5;publishedState.placementOwner=0x1234;
+    publishedState.publicPolicyVersion=0xf0505303u;publishedState.research=referenceInputs;
+    uint32_t renderArguments[10]{};renderArguments[0]=h5::hooks::PlacementRendererCaller;
+    renderArguments[5]=1;renderArguments[7]=3;renderArguments[9]=2;
+    heroes5_sdk::EngineContext publicationFrame{};
+    publicationFrame.residentData=publicationResident;publicationFrame.residentSchema=6;
+    publicationFrame.residentBytes=heroes5_sdk::ContextCapacity;publicationFrame.hasRegisters=1;
+    publicationFrame.registers.edi=0x1234;
+    publicationFrame.registers.savedEsp=reinterpret_cast<uint32_t>(renderArguments)-4;
+    publicationVerification=&publishedVerification;publicationPublic=&publishedState;publicationContext=&publicationFrame;
+    failReferenceRenderer=false;publishedVerification.Reset();
+    assert(!PublicationFault(publicationFrame));
+    assert(sawUnpublishedReference && !(publishedVerification.sequence & 1));
+    assert(publishedVerification.referenceTrace.complete==1 && publishedVerification.playerField.version==1);
+    assert(publishedState.renderedGeneration==publishedState.placementGeneration);
+    assert(publishedState.publicTypes[0]==3 && *reinterpret_cast<uint32_t*>(publishedState.models+8+496)==1);
+    failOrdinaryPublication=true;publishedState.renderedGeneration=-1;publishedVerification.Reset();
+    assert(PublicationFault(publicationFrame));
+    assert(!(publishedVerification.sequence & 1) && !publishedVerification.referenceTrace.complete);
+    assert(!publishedVerification.referenceAttackGeneration && !publishedVerification.playerField.version);
+    failOrdinaryPublication=false;publishedState.renderedGeneration=-1;publishedVerification.Reset();
+    assert(!PublicationFault(publicationFrame));
+    assert(!(publishedVerification.sequence & 1) && publishedVerification.referenceTrace.complete==1);
+    // Unknown public types deliberately produce no forecast, but completion
+    // of the same publication transaction still admits facts-only capture.
+    publishedVerification.Reset();publishedState.renderedGeneration=-1;
+    memset(publishedState.models,0,sizeof(publishedState.models));
+    publishedState.publicPolicy.neutralTypesUnknown=true;sawUnpublishedReference=false;
+    assert(!PublicationFault(publicationFrame));
+    assert(!sawUnpublishedReference && !(publishedVerification.sequence & 1));
+    assert(publishedVerification.referenceTrace.complete==1 && publishedVerification.playerField.version==1);
+    assert(publishedState.renderedGeneration==publishedState.placementGeneration);
+    assert(!*reinterpret_cast<uint32_t*>(publishedState.models+8+496));
+    publicationVerification=nullptr;publicationPublic=nullptr;publicationContext=nullptr;g_neutralTypesUnknown=false;
     memcpy(renderer,savedRenderer,5);FlushInstructionCache(GetCurrentProcess(),renderer,5);
     DWORD ignoredProtection=0;assert(VirtualProtect(renderer,5,oldProtection,&ignoredProtection));
     g_placementOwner=nullptr;
