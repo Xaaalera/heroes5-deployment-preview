@@ -211,7 +211,6 @@ bool RestorePlayerComparisonUI(const PostStartVerification& state, HWND window) 
         state.playerCaptureFailures || !state.playerGeneration || state.playerForecastCount > 7 ||
         state.playerActual.failures || state.playerActual.overflow ||
         state.playerActual.counts[0] > 7 || state.playerActual.counts[1] > 7) { return false; }
-    h5_preview::ComparisonWindow::ConfigureKnowledgeControl(NeutralTypesKnown, SetNeutralTypeKnowledge);
     h5_preview::ComparisonStack forecast[7]{}, actual[7]{}, own[7]{};
     const auto copy = [](const h5::army::DeploymentStackSample& source) {
         return h5_preview::ComparisonStack{source.type, source.quantity, source.footprint, source.x, source.y};
@@ -222,7 +221,8 @@ bool RestorePlayerComparisonUI(const PostStartVerification& state, HWND window) 
     if (!h5_preview::ComparisonWindow::SetBattle(forecast, state.playerForecastCount,
         actual, state.playerActual.counts[1], own, state.playerActual.counts[0],
         state.referenceAttackGeneration == state.playerGeneration ? &state.referenceTrace : nullptr,
-        state.playerQuantityLabels, h5::army::ReadCreatureDisplayName)) { return false; }
+        state.playerQuantityLabels, h5::army::ReadCreatureDisplayName,
+        state.playerWidth, state.playerHeight, state.playerGeneration)) { return false; }
     h5_preview::ComparisonWindow::ShowLauncher(window);
     return true;
 }
@@ -863,7 +863,10 @@ uint32_t __cdecl DispatchPreview(uint32_t command, uint32_t argument,
             h5_preview::ComparisonWindow::Close(); postStart.Reset(); capture.Begin();
             verification = {}; verification.version = 2; verification.generation = capture.generation;
         }
-        if (command == 2 && !h5_preview::ComparisonWindow::HasBattle()) { RestorePlayerComparisonUI(postStart, context->window); }
+        if (command == 2) {
+            h5_preview::ComparisonWindow::RefreshOwnerLayout(context->window);
+            if (!h5_preview::ComparisonWindow::HasBattle()) { RestorePlayerComparisonUI(postStart, context->window); }
+        }
         if (command == 35) {
             auto& borrowed = *reinterpret_cast<heroes5_sdk::EngineInterceptionContext*>(argument);
             if (borrowed.size != sizeof(borrowed) || borrowed.version != 1 || borrowed.readOnly ||
@@ -871,10 +874,13 @@ uint32_t __cdecl DispatchPreview(uint32_t command, uint32_t argument,
             borrowed.action = heroes5_sdk::EngineCallAction::Continue;
             if (postStart.playerVersion == 1 && postStart.playerFrozen && !postStart.playerCommitted) {
                 h5::army::CommittedDeploymentSample actual{};
-                const bool complete = h5::army::ReadCommittedDeployment(context->registers, actual);
+                uint32_t fieldWidth = 0, fieldHeight = 0;
+                const bool complete = h5::army::ReadCommittedDeployment(context->registers, actual) &&
+                    h5::army::ReadCombatFieldDimensions(actual.world, fieldWidth, fieldHeight);
                 InterlockedIncrement(&postStart.sequence);
                 if (complete) {
                     postStart.playerActual = actual; postStart.playerCommitted = 1;
+                    postStart.playerWidth = fieldWidth; postStart.playerHeight = fieldHeight;
                     postStart.playerOracleCountsAtCapture[0] = postStart.positionCount;
                     postStart.playerOracleCountsAtCapture[1] = postStart.quantityCount;
                     postStart.playerOracleCountsAtCapture[2] = postStart.rosterObserved;

@@ -35,6 +35,56 @@ SPEC.loader.exec_module(probe)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_rejected_battle_preserves_accepted_geometry_and_identity(self):
+        if not vcvarsall().is_file():
+            self.fail('MSVC is required for the comparison state regression')
+        driver = r'''#include "comparison_window.hpp"
+#include <cassert>
+using namespace h5_preview;
+int main() {
+ ComparisonStack neutral{15,50,1,13,4}, own{3,100,1,2,6};
+ assert(ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,1,nullptr,nullptr,nullptr,16,12,123));
+ const auto originalSurvives = [] {
+  int columns=0, rows=0; uint32_t battleId=0;
+  ComparisonWindow::ReadBattleGeometry(columns,rows,battleId);
+  assert(columns==12 && rows==10 && battleId==123 && ComparisonWindow::HasBattle());
+ };
+ originalSurvives();
+ assert(!ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,0,nullptr,nullptr,nullptr,20,14,456));
+ originalSurvives();
+ assert(!ComparisonWindow::SetBattle(&neutral,1,&neutral,1,nullptr,1,nullptr,nullptr,nullptr,20,14,456));
+ originalSurvives();
+ own.footprint=0;
+ assert(!ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,1,nullptr,nullptr,nullptr,20,14,456));
+ originalSurvives();
+ own.footprint=1;
+ neutral.quantity=0;
+ assert(!ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,1,nullptr,nullptr,nullptr,20,14,456));
+ originalSurvives();
+ neutral.quantity=50;
+ assert(!ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,1,nullptr,nullptr,nullptr,7,14,456));
+ originalSurvives();
+ assert(ComparisonWindow::SetBattle(&neutral,1,&neutral,1,&own,1,nullptr,nullptr,nullptr,20,14,456));
+ int columns=0, rows=0; uint32_t battleId=0;
+ ComparisonWindow::ReadBattleGeometry(columns,rows,battleId);
+ assert(columns==16 && rows==12 && battleId==456);
+ ComparisonWindow::Close();
+}
+'''
+        with tempfile.TemporaryDirectory(prefix='h5-comparison-state-') as directory:
+            temporary = Path(directory)
+            (temporary / 'comparison_state.cpp').write_text(driver, encoding='utf-8')
+            (temporary / 'build.cmd').write_text(
+                f'@call "{vcvarsall()}" x86 >nul\n@if errorlevel 1 exit /b 1\n'
+                f'@cl /nologo /EHsc /O2 /std:c++20 /DNOMINMAX /DWIN32_LEAN_AND_MEAN '
+                f'/I"{MOD_ROOT / "src"}" /Fe:comparison_state.exe comparison_state.cpp user32.lib\n',
+                encoding='utf-8')
+            build = subprocess.run(['cmd', '/d', '/c', str(temporary / 'build.cmd')], cwd=temporary, capture_output=True)
+            self.assertEqual(build.returncode, 0, build.stdout.decode(errors='replace') + build.stderr.decode(errors='replace'))
+            result = subprocess.run([str(temporary / 'comparison_state.exe')], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout.decode(errors='replace') + result.stderr.decode(errors='replace'))
+
+
     def test_frozen_deployment_matching_and_observed_differences(self):
         if not vcvarsall().is_file():
             self.fail('MSVC is required for the player comparison acceptance check')
