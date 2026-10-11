@@ -24,8 +24,10 @@ spec = importlib.util.spec_from_file_location('native_preview_check', Path(__fil
 check = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(check)
 sys.path.insert(0, str(check.PROBE.parent))
+from workspace import game_installation
 probe_spec = importlib.util.spec_from_file_location('native_probe', check.PROBE)
 probe = importlib.util.module_from_spec(probe_spec)
+sys.modules[probe_spec.name] = probe
 probe_spec.loader.exec_module(probe)
 
 
@@ -1880,7 +1882,7 @@ def parse_hero_army(specifications, creature_names):
     return army
 
 
-def run_map(round_number, fixture, report, destination, creature_names, background=False):
+def run_map(round_number, fixture, report, destination, creature_names, background=False, runtime=None):
     foreground = None
     original_clip = None
     if background:
@@ -1894,10 +1896,11 @@ def run_map(round_number, fixture, report, destination, creature_names, backgrou
         user32.GetClipCursor.argtypes = [ctypes.POINTER(wintypes.RECT)]
         if not user32.GetClipCursor(ctypes.byref(original_clip)):
             raise RuntimeError('Cannot record cursor clipping before background launch')
-    launch_arguments = ['launch', '--map', fixture['name'], '--control', '--observe-deployment']
-    if background:
-        launch_arguments.append('--background')
-    launch = json.loads(check.command(check.PYTHON, '-X', 'utf8', str(check.PROBE), *launch_arguments))
+    launch = probe.launch(
+        probe.api(), map_name=fixture['name'], control=True,
+        observe_deployment=True, background=background,
+        launch_gate=runtime['launch_gate'] if runtime else None,
+        graphics_facade_hash=runtime['graphics_sha256'] if runtime else None)
     pid = launch['pid']
     created = launch.get('created')
     hero_control = 'small' if fixture['kind'] == 'authored_polygon' and round_number % 2 == 0 else 'default'
@@ -1908,6 +1911,13 @@ def run_map(round_number, fixture, report, destination, creature_names, backgrou
     report['runs'].append(run)
     save(report, destination)
     try:
+        if runtime is not None:
+            import game_control
+            readiness_started = time.perf_counter()
+            owner = json.loads(probe.STATE.read_text(encoding='utf-8'))
+            game_control.wait_for_game_loop(probe, owner)
+            run['game_loop_ready_seconds'] = time.perf_counter() - readiness_started
+            save(report, destination)
         if background:
             run['background_status'] = json.loads(check.command(
                 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(check.GAME_UI),
@@ -2328,6 +2338,8 @@ def main():
                         help='Explicit developer-only pre-Start hidden source trace; no exact admin prediction yet.')
     parser.add_argument('--background', action='store_true',
                         help='Start without activation, then verify the sandbox window is off-screen.')
+    parser.add_argument('--sdk-runtime', action='store_true',
+                        help='Use the sealed SDK launch gate and owned graphics compatibility chain.')
     args = parser.parse_args()
     if args.verify_latest:
         candidates = sorted((check.ROOT / '.local/test-state').glob('accuracy-campaign-*-rotation.json'))
@@ -2371,9 +2383,13 @@ def main():
                     'map_sha256': sha256(map_file),
                     'packs': [{'name': f'pack_{index}', 'public_count': len(army), 'army': army}
                               for index, army in enumerate(manifest['packs'])]},
-        'rmg_a': prepare_rmg_fixture(check.ROOT, '1231231.h5m', 'A', 'A11CE000-0000-4000-8000-000000000001'),
-        'rmg_b': prepare_rmg_fixture(check.ROOT, '12312312.h5m', 'B', 'A11CE000-0000-4000-8000-000000000002'),
     }
+    if args.map in (None, 'rmg_a'):
+        fixtures['rmg_a'] = prepare_rmg_fixture(
+            check.ROOT, '1231231.h5m', 'A', 'A11CE000-0000-4000-8000-000000000001')
+    if args.map in (None, 'rmg_b'):
+        fixtures['rmg_b'] = prepare_rmg_fixture(
+            check.ROOT, '12312312.h5m', 'B', 'A11CE000-0000-4000-8000-000000000002')
     if args.only_pack:
         fixture = fixtures[args.map]
         fixture['packs'] = [pack for pack in fixture['packs'] if pack['name'] == args.only_pack]
@@ -2383,7 +2399,7 @@ def main():
         fixture = fixtures[args.map]
         fixture['packs'] = fixture['packs'][:args.smoke_packs]
     families, creature_sources, creature_names = creature_families(
-        check.ROOT / 'Heroes of Might and Magic 5 Tribes of the East/data')
+        game_installation(check.ROOT) / 'data')
     try:
         custom_hero_army = parse_hero_army(args.hero_army, creature_names)
     except ValueError as error:
@@ -2413,14 +2429,38 @@ def main():
     destination = check.ROOT / '.local/test-state' / f'accuracy-campaign-{stamp}-{os.getpid()}-{suffix}.json'
     print(f'Accuracy report: {destination}', flush=True)
     save(report, destination)
+    runtime = None
+    staged_graphics = None
     try:
+        if args.sdk_runtime:
+            from plugin_core import load_sdk_runtime
+            from xalkit_runtime import stage_owned_graphics, restore_owned_graphics
+            runtime = load_sdk_runtime(check.DEVKIT)
+            staged_graphics = stage_owned_graphics(check.ROOT, runtime['graphics'])
+            runtime['graphics_sha256'] = staged_graphics['facade_sha256']
+            report['sdk_launch'] = {
+                'launch_gate_sha256': sha256(Path(runtime['launch_gate'])),
+                'graphics_facade_sha256': runtime['graphics_sha256'],
+                'retained_graphics_sha256': staged_graphics['original_sha256']}
+            save(report, destination)
         for round_number in range(1, args.rounds + 1):
             family = args.map or ('polygon', 'rmg_a', 'rmg_b')[(round_number - 1) % 3]
-            run_map(round_number, fixtures[family], report, destination, creature_names, args.background)
+            run_map(round_number, fixtures[family], report, destination, creature_names, args.background, runtime)
     except Exception as error:
         report['error'] = str(error)
         save(report, destination)
         raise
+    finally:
+        if staged_graphics is not None:
+            try:
+                restore_owned_graphics(staged_graphics)
+                report['graphics_restored'] = True
+                save(report, destination)
+            except Exception as error:
+                report['graphics_restored'] = False
+                report.setdefault('cleanup_errors', []).append('graphics_restore: ' + str(error))
+                save(report, destination)
+                raise
     battles = [battle for run in report['runs'] for battle in run['battles']]
     full = sum(battle['full_match'] for battle in battles)
     mixed = [battle for battle in battles if battle['fixture']['public_count'] > 1]
