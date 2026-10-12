@@ -1,0 +1,111 @@
+{
+  "diffHash": "8f9c0e54a5c28c7141bce1dca0ea7e12353cab9326bd95b9d99949a8c9897173",
+  "commitSha": "1605ab8e347fb226e8e232a6adb615c06644ff3f",
+  "perAgent": {
+    "craft": {
+      "score": 9,
+      "verdict": "PASS",
+      "reviewer": "/root/ordinary_large_melee_craft",
+      "evidence": {
+        "record": "ordinary-large-melee-source-craft-final.json",
+        "sha256": "9627f9cbf3e4005cdc9904ec9df3be1d37ffb361178108dce83288f989ecdbf0",
+        "reviewer_verdict": "PASS",
+        "head": "1605ab8e347fb226e8e232a6adb615c06644ff3f",
+        "scope": "Configured SOURCE acceptance only; current three-file delta plus exact unchanged cumulative coverage. Player artifact acceptance is separate."
+      }
+    },
+    "architecture": {
+      "score": 9,
+      "verdict": "PASS",
+      "reviewer": "Codex /root/ordinary_large_melee_architecture",
+      "evidence": {
+        "record": "ordinary-large-melee-source-architecture-final.json",
+        "sha256": "124caffef0f3381a28d041b4312efa84e6efbc255b9d8a7c550e0a32b4b7c551",
+        "reviewer_verdict": "PASS",
+        "head": "1605ab8e347fb226e8e232a6adb615c06644ff3f",
+        "scope": "Configured SOURCE acceptance only; current three-file delta plus exact unchanged cumulative coverage. Player artifact acceptance is separate."
+      }
+    },
+    "tests": {
+      "score": 9,
+      "verdict": "PASS",
+      "reviewer": "/root/predictor_final_tests",
+      "evidence": {
+        "record": "ordinary-large-melee-source-tests-final.json",
+        "sha256": "7a01016faf59ac0061daa99296713f2da60a539f24b6f4909994163cd087d3b2",
+        "reviewer_verdict": "PASS_SOURCE_NOT_PLAYER_ARTIFACT",
+        "head": "1605ab8e347fb226e8e232a6adb615c06644ff3f",
+        "scope": "Configured SOURCE acceptance only; current three-file delta plus exact unchanged cumulative coverage. Player artifact acceptance is separate."
+      }
+    },
+    "docs": {
+      "score": 10,
+      "verdict": "PASS",
+      "reviewer": "/root/ordinary_large_melee_docs",
+      "evidence": {
+        "record": "ordinary-large-melee-source-docs-review.json",
+        "sha256": "45ffebaf194110124aeae42f46f5883c5832f3fe4f161469de8212871464268b",
+        "reviewer_verdict": "PASS",
+        "head": "1605ab8e347fb226e8e232a6adb615c06644ff3f",
+        "scope": "Configured SOURCE acceptance only; current three-file delta plus exact unchanged cumulative coverage. Player artifact acceptance is separate."
+      },
+      "review": {
+        "reviewer": "/root/ordinary_large_melee_docs",
+        "files": [
+          "AGENTS.md",
+          "CONTRIBUTING.md",
+          "README.md"
+        ],
+        "criteria": {
+          "purpose": {
+            "verdict": "PASS",
+            "evidence": "README introduces the experimental pre-Start predictor in RU/EN and directs players to the released alpha.1 package and guide; AGENTS supplies working rules, while CONTRIBUTING points to the contribution standard."
+          },
+          "structure": {
+            "verdict": "PASS",
+            "evidence": "The two changed README paragraphs sit under Documentation, after the purpose and canonical links. The short repository entry point does not duplicate the player manual. AGENTS and CONTRIBUTING are unchanged."
+          },
+          "specificity": {
+            "verdict": "PASS",
+            "evidence": "Both README languages name the alpha.1 release, ordinary game launch without the SDK, pre-Start forecast, native after-Start Placement control, canonical guide and published-archive boundary. The C++ delta excludes ranged units from melee subsets and handles an empty melee subset with a known hero; it adds no new player instruction."
+          },
+          "reproducibility": {
+            "verdict": "PASS",
+            "evidence": "README retains the canonical installation and standalone-clone links, pinned xkit/Game API revisions and git submodule update --init. The release link resolves to v0.2.0-alpha.1; the guide source gives package download and player workflow. This review did not repeat installation."
+          },
+          "evidence": {
+            "verdict": "PASS",
+            "evidence": "GitHub release v0.2.0-alpha.1 identifies source 0e1fadb and archive SHA-256 40ad7daae635ec92ea548aab406f30ca124e9cad3303dd7d412dea2f48c2ce84. player20-public-alpha-release-recovered.json records the public download hash; predictor-alpha-knowledge-deployed-verification.json records published website e2c1a81. The changed native code has a scoped development HMR proof, ordinary-large-melee-archer100-live-after-start-coherent.json (7/7 positions), not a new released-package or global-accuracy result."
+          },
+          "applicability": {
+            "verdict": "PASS",
+            "evidence": "README explicitly says working-branch changes do not alter the published archive, and now delegates release results and limitations to the alpha.1 player guide. It removes the earlier candidate's moving 273/273 and 175/213 wording. The native patch is not published, and no new performance or whole-campaign claim appears."
+          },
+          "translations": {
+            "verdict": "PASS",
+            "evidence": "The revised RU and EN paragraphs agree on alpha.1, SDK-free ordinary launch, pre-/post-Start behavior, guide ownership, unchanged published archive and architecture contract. The retained purpose and setup sections also remain paired."
+          },
+          "maintenance": {
+            "verdict": "PASS",
+            "evidence": "The website remains the sole living player guide; the README links it in both languages. Root research diary already records the 2026-10-03 empty melee subset and hero contribution with a bounded 24/24 calculation and one 7/7 battle; this review adds no duplicate article or broad claim. No canonical article changed in the three-path source delta, so new article critics do not apply."
+          }
+        },
+        "findings": []
+      }
+    },
+    "security": {
+      "score": 10,
+      "verdict": "PASS",
+      "reviewer": "/root/ordinary_large_melee_security",
+      "evidence": {
+        "record": "ordinary-large-melee-source-security-review.json",
+        "sha256": "ce2a48cd33290400073bf4236c6638280162296e39d2f07580d5161efc68efef",
+        "reviewer_verdict": "PASS",
+        "head": "1605ab8e347fb226e8e232a6adb615c06644ff3f",
+        "scope": "Configured SOURCE acceptance only; current three-file delta plus exact unchanged cumulative coverage. Player artifact acceptance is separate."
+      }
+    }
+  },
+  "overall": "PASS",
+  "timestamp": "2026-10-12T14:35:37.154Z"
+}
