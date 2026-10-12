@@ -24,11 +24,19 @@ jobs:
           $expectedApi = (git -C devkit rev-parse HEAD:game-api).Trim()
           $actualApi = (git -C game-api rev-parse HEAD).Trim()
           if ($expectedApi -ne $actualApi) { throw 'Game API pins differ' }
+          # A relative gitfile breaks when Git enters this submodule through the SDK junction.
+          $sharedGitDirectory = (git -C game-api rev-parse --absolute-git-dir)
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve shared Game API Git metadata' }
+          Set-Content -LiteralPath (Join-Path $sharedApi '.git') -Value "gitdir: $($sharedGitDirectory.Trim())" -Encoding utf8NoBOM -Force
           if (Test-Path -LiteralPath $sdkApi) {
             if (@(Get-ChildItem -LiteralPath $sdkApi -Force).Count -ne 0) { throw 'Expected empty SDK Game API placeholder' }
             Remove-Item -LiteralPath $sdkApi
           }
           New-Item -ItemType Junction -Path $sdkApi -Target $sharedApi | Out-Null
+          git -C devkit/game-api status --porcelain --untracked-files=normal
+          if ($LASTEXITCODE -ne 0) { throw 'Shared Game API junction is not a valid Git worktree' }
+          git status --porcelain --untracked-files=normal
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect checkout with shared Game API junction' }
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.10'
