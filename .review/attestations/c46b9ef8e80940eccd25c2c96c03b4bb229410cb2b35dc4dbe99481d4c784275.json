@@ -1,0 +1,126 @@
+{
+  "diffHash": "c46b9ef8e80940eccd25c2c96c03b4bb229410cb2b35dc4dbe99481d4c784275",
+  "commitSha": "a8ff913f6d3cfcd800d53be1f9b5adf6b0632ae3",
+  "perAgent": {
+    "craft": {
+      "score": 10,
+      "verdict": "PASS",
+      "reviewer": "/root/predictor_final_craft",
+      "evidence": {
+        "record": "predictor-ci-junction-craft-review.json",
+        "sha256": "8c5ab5084f26bf7bef043a221ca862235665687ad65f534e958c9670b4c6de58",
+        "head": "a8ff913f6d3cfcd800d53be1f9b5adf6b0632ae3",
+        "unchanged_coverage": {
+          "record": "predictor-ci-source-craft-final.json",
+          "sha256": "0b40566fa0e515c0ef1e3e5246af12cce9e049107b5130216bf3628c8aa21164",
+          "head": "76a69f4636082c7e93d1881b868da885ba7b7a28"
+        }
+      }
+    },
+    "architecture": {
+      "score": 9,
+      "verdict": "PASS",
+      "reviewer": "/root/predictor_ci_junction_architecture",
+      "evidence": {
+        "record": "predictor-ci-junction-architecture-review.json",
+        "sha256": "8141d5a9a4ed76e9328fbdd1b96c4c38935bc4d59b261a9f79ed346c513e8620",
+        "head": "a8ff913f6d3cfcd800d53be1f9b5adf6b0632ae3",
+        "unchanged_coverage": {
+          "record": "predictor-ci-source-architecture-final.json",
+          "sha256": "2bae6da47685fd5b9f9abe4ad36946e4c01bd424435b9837bfb6ffe452c55531",
+          "head": "76a69f4636082c7e93d1881b868da885ba7b7a28"
+        }
+      }
+    },
+    "tests": {
+      "score": 9,
+      "verdict": "PASS",
+      "reviewer": "/root/predictor_final_tests",
+      "evidence": {
+        "record": "predictor-ci-junction-tests-review.json",
+        "sha256": "2b9308af3d1462a5fa2437808d2f2769bad6316ac17868a68bafa3f549bb0216",
+        "head": "a8ff913f6d3cfcd800d53be1f9b5adf6b0632ae3",
+        "unchanged_coverage": {
+          "record": "predictor-ci-source-tests-final.json",
+          "sha256": "a0be3d5ac2ae22c01de3a9215e857f10c641e686bcd00b93ad47b1f73c71abdb",
+          "head": "76a69f4636082c7e93d1881b868da885ba7b7a28"
+        }
+      }
+    },
+    "docs": {
+      "score": 10,
+      "verdict": "PASS",
+      "reviewer": "/root/predictor_ci_junction_docs",
+      "evidence": {
+        "record": "predictor-ci-junction-docs-review.json",
+        "sha256": "d3bd574b1cb6b07f8babc9bf2829b41b92733097240c2080471781690535a99b",
+        "head": "a8ff913f6d3cfcd800d53be1f9b5adf6b0632ae3",
+        "unchanged_coverage": {
+          "record": "predictor-ci-source-docs-review.json",
+          "sha256": "52baab13168b91dc6cc3252ca0ef9d90222debd3c5c72957b7c3c150605e243b",
+          "head": "76a69f4636082c7e93d1881b868da885ba7b7a28"
+        }
+      },
+      "review": {
+        "reviewer": "/root/predictor_ci_junction_docs",
+        "files": [
+          "AGENTS.md",
+          "CONTRIBUTING.md",
+          "README.md"
+        ],
+        "criteria": {
+          "purpose": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md lines 115-118 defines developer test profile policy; README remains the player entry point and CONTRIBUTING points to the canonical review standard."
+          },
+          "structure": {
+            "verdict": "PASS",
+            "evidence": "CI profile rules are grouped in AGENTS.md under Research branch rules, directly above the RU/EN working rules. README remains concise and points to the website."
+          },
+          "specificity": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md names npm test default full, forced pre-push full, explicit CI public, separate legacy-export DLL, 26 unexecuted oracle cases in the local public receipt, no skips for selected cases, and both registry reasons; .githooks/pre-push, verify.yml, scripts/check.py and tests/preview_support.py implement those statements. The current eight-line workflow change only repairs Git metadata access through the SDK junction and adds status checks; it does not change these profile claims."
+          },
+          "reproducibility": {
+            "verdict": "PASS",
+            "evidence": "README links standalone cloning and pinned devkit/Game API dependencies. AGENTS.md names H5_TEST_PROFILE=public/full; local receipts at this source hash show 60 selected public tests and 86 full tests, zero skips/errors/failures. Hosted CI remains pending. The local junction reproduction now establishes Git status with the BOM-free absolute gitfile; hosted CI remains pending."
+          },
+          "evidence": {
+            "verdict": "PASS",
+            "evidence": "predictor-ci-profile-public.json records 60/60 selected tests, 26 named excluded private game oracles, no skips; predictor-ci-profile-full.json records 86/86, no skips. Both receipts bind check.py, preview_support.py and test_native_preview.py hashes matching this HEAD. This is local evidence only."
+          },
+          "applicability": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md explicitly says public CI does not certify game-oracle coverage or a fresh campaign; pre-push separately runs accuracy-campaign.py --verify-latest. README distinguishes current candidate from downloadable preview.2 and internal 273/273 reference from approximate 175/213 mixed results. The current workflow correction changes checkout plumbing, not the stated coverage or candidate results."
+          },
+          "translations": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md lines 115-116 provide matching RU/EN profile rules. Lines 47/57 now both point to the same approved ordinary/public/scouted exception and separate private full-calculation policy in the research rules below; the RU heading is readable."
+          },
+          "maintenance": {
+            "verdict": "PASS",
+            "evidence": "AGENTS.md owns working rules and the profile error registry, while README/CONTRIBUTING link living website documentation. The two new status reasons are registered with their codes in tests/preview_support.py; no current source doc claims hosted CI or fresh helper-campaign completion. No Markdown article or declared dependency behavior changed at this delta, so no new article critique is triggered."
+          }
+        },
+        "findings": []
+      }
+    },
+    "security": {
+      "score": 10,
+      "verdict": "PASS",
+      "reviewer": "/root/predictor_ci_junction_security",
+      "evidence": {
+        "record": "predictor-ci-junction-security-review.json",
+        "sha256": "0c942eb57aa9268afd2388b51f477b8139caa136e49e31cd9d86aca72a04880d",
+        "head": "a8ff913f6d3cfcd800d53be1f9b5adf6b0632ae3",
+        "unchanged_coverage": {
+          "record": "predictor-ci-source-security-review.json",
+          "sha256": "87866f1e5e44ce25ba873a1c622d95f9cffe02571b75cb235dee236eaf017168",
+          "head": "76a69f4636082c7e93d1881b868da885ba7b7a28"
+        }
+      }
+    }
+  },
+  "overall": "PASS",
+  "timestamp": "2026-10-12T12:45:26.195Z"
+}
