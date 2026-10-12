@@ -18,9 +18,9 @@ Experimental prediction of enemy placement before Start. Ordinary prediction use
 - [Game API](https://xaaalera.github.io/heroes5-knowledge/reference/game-api/).
 - [Карта исследований / Research index](https://xaaalera.github.io/heroes5-knowledge/reference/research-index/).
 
-Перенос предиктора на SDK xkit продолжается. Сохранность всех функций, точность новой сборки и готовность самостоятельного пакета проверяются отдельно; результаты прежних DLL не переносятся на неё. Обязательные границы — в [архитектурном контракте](https://xaaalera.github.io/heroes5-knowledge/modding/native-projects/#architecture-contract).
+Предиктор собирается через xkit, а готовый пакет запускается обычным способом без SDK. До Start показывается приблизительная расстановка; после начала боя нативная кнопка «Расстановка» открывает прогноз и фактические позиции с пояснениями. Самостоятельный запуск и серия из 273 боёв проверены на текущем кандидате. Область проверки и ограничения описаны на сайте. Обязательные границы — в [архитектурном контракте](https://xaaalera.github.io/heroes5-knowledge/modding/native-projects/#architecture-contract).
 
-The xkit migration is in progress. Full feature parity, new-build accuracy and standalone-package readiness require separate checks; earlier DLL accuracy results do not transfer. Follow the [required architecture contract](https://xaaalera.github.io/heroes5-knowledge/en/modding/native-projects/#architecture-contract).
+The predictor builds through xkit; its player package uses the normal game launch without the SDK. Before Start it shows an approximate formation. Once combat starts, the native “Расстановка” button opens the forecast and actual positions with explanations. Standalone startup and a 273-battle series were verified on the current candidate. The website describes the tested scope and limitations. Follow the [required architecture contract](https://xaaalera.github.io/heroes5-knowledge/en/modding/native-projects/#architecture-contract).
 
 Текущие инструкции находятся только на сайте. Каждый мод устанавливается отдельно с указанными общими зависимостями; исходники не являются готовым игровым пакетом.
 

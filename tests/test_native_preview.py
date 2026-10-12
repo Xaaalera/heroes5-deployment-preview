@@ -4409,7 +4409,7 @@ int main() {
                                 'g_spreadFallback': '0x302001', 'g_superadminEnabled': '0x302002'}.items():
             assembly = assembly.replace(symbol, address)
         code = bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(assembly, 0x300000)[0])
-        for admin, destination in ((1, 0x306100), (0, 0x306200)):
+        for admin, destination in ((1, 0x306100), (0, 0x306100)):
             with self.subTest(superadmin=admin):
                 translated = Uc(UC_ARCH_X86, UC_MODE_32)
                 translated.mem_map(0x300000, 65536)
@@ -4420,7 +4420,7 @@ int main() {
                                     emulator.emu_stop() if address in (0x306000, 0x306100, 0x306200) else None)
                 translated.emu_start(0x300000, destination, count=1000)
                 self.assertEqual(translated.reg_read(UC_X86_REG_EIP), destination)
-                self.assertEqual(translated.mem_read(0x302001, 1)[0], 0 if admin else 1)
+                self.assertEqual(translated.mem_read(0x302001, 1)[0], 0)
 
     def test_protective_placement_matches_original_candidates_and_footprints(self):
         import pefile
@@ -4922,7 +4922,8 @@ int main() {
         code = bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(assembly, 0x300000)[0])
         for admin, row, blocked, expected_row, destination in (
                 (1,9,(8,),10,0x306000), (1,1,(),2,0x306000),
-                (1,9,(8,10),9,0x306100), (0,9,(8,),9,0x306100)):
+                (1,9,(8,10),9,0x306100), (0,9,(8,),10,0x306000),
+                (0,1,(),2,0x306000), (0,9,(8,10),9,0x306100)):
             with self.subTest(admin=admin, row=row, blocked=blocked):
                 machine = Uc(UC_ARCH_X86, UC_MODE_32)
                 machine.mem_map(0x200000,65536);machine.mem_map(0x300000,65536)
@@ -5318,7 +5319,10 @@ int main() {
     assert(PlacementHasPhysicalShot(130) && !PlacementHasShooterCategory(130));
     g_actorInputs[1].skipSpeed=0;
     definitions[118][0x100/4]=117;g_publicTypes[0]=118;assert(PlacementHasShooterCategory(130));
-    g_superadminEnabled=false;assert(!PlacementHasShooterCategory(130));
+    g_superadminEnabled=false;
+    assert(PlacementHasShooterCategory(130) && !PlacementHasPhysicalShot(130));
+    g_actorInputs[1].skipSpeed=4;
+    assert(PlacementHasShooterCategory(130) && !PlacementHasPhysicalShot(130));
     g_superadminEnabled=true;g_sourceSimpleLayout=true;assert(!PlacementHasShooterCategory(130));
 }
 """
@@ -5358,7 +5362,7 @@ const int* __fastcall Definition(uint32_t type) { return definitions[type]; }
 const uintptr_t kCreatureDefinition=reinterpret_cast<uintptr_t>(&Definition);
 bool PlacementHasPhysicalShot(uint32_t type) { return definitions[type][0x4c/4]>0; }
 bool PlacementHasShooterCategory(uint32_t type) { return PlacementHasPhysicalShot(type); }
-int PublicPlacementRole(uint32_t type) { if (!g_superadminEnabled || g_predictedDefensive) return definitions[type][0x4c/4]>0 ? 1 : definitions[type][0xdc/4]==2 ? 0 : 2; return type==10 ? 4 : type==11 ? 5 : type==12 ? 2 : type==14 ? 1 : 0; }
+int PublicPlacementRole(uint32_t type) { if (g_predictedDefensive) return definitions[type][0x4c/4]>0 ? 1 : definitions[type][0xdc/4]==2 ? 0 : 2; return type==10 ? 4 : type==11 ? 5 : type==12 ? 2 : type==14 ? 1 : 0; }
 """ + aggregate + comparator + r"""
 int __fastcall Evaluate(const PlacementAggregate* value,void*,const PlacementAggregate*) { return value->damage+value->health; }
 struct SortPair { int score; uint32_t source; };
@@ -5406,6 +5410,32 @@ int main() {
     g_publicKnownCounts[0]=20;assert(PreparePublicOrder() && g_publicPlacementScore[0]==40);
     const auto disclosedDestination=reinterpret_cast<uint32_t*>(g_outputStorage+8+924)[0];
     assert(reinterpret_cast<uint32_t*>(g_outputStorage+8+832)[disclosedDestination]==20);
+    // Ordinary movement attributes are public and refreshed on every build;
+    // private source identities/counts/movement/exclusions cannot change them.
+    g_publicTypes[0]=10;g_predictedDefensive=false;
+    definitions[10][0x58/4]=8;definitions[11][0x58/4]=4;definitions[12][0x58/4]=4;
+    assert(PreparePublicOrder());
+    assert(g_publicSortSpeed[0]==8 && g_publicSortFlying[0]==0);
+    assert(g_orderedPublicTypes[g_groundRetryOrder[0]]==10);
+    uint32_t expectedOrder[7]{},expectedRetry[7]{};int expectedScores[7]{};
+    memcpy(expectedOrder,g_orderedPublicTypes,sizeof(expectedOrder));
+    memcpy(expectedRetry,g_groundRetryOrder,sizeof(expectedRetry));
+    memcpy(expectedScores,g_publicPlacementScore,sizeof(expectedScores));
+    memset(g_superadminSourceTypes,0xff,sizeof(g_superadminSourceTypes));
+    memset(g_superadminSourceCounts,0xff,sizeof(g_superadminSourceCounts));
+    memset(g_superadminSourceSpeed,0xff,sizeof(g_superadminSourceSpeed));
+    memset(g_superadminSourceFlying,0xff,sizeof(g_superadminSourceFlying));
+    g_superadminSourceGeneration=0;g_superadminSourceCount=7;g_predictionExcludedMask=0x7f;
+    memset(g_publicSortSpeed,0xff,sizeof(g_publicSortSpeed));
+    memset(g_publicSortFlying,0xff,sizeof(g_publicSortFlying));
+    assert(PreparePublicOrder() && !g_superadminEnabled && g_plannedProjectionCount==5);
+    assert(memcmp(expectedOrder,g_orderedPublicTypes,sizeof(expectedOrder))==0);
+    assert(memcmp(expectedRetry,g_groundRetryOrder,sizeof(expectedRetry))==0);
+    assert(memcmp(expectedScores,g_publicPlacementScore,sizeof(expectedScores))==0);
+    definitions[10][0x60/4]=1;assert(PreparePublicOrder());
+    assert(g_publicSortFlying[0]==1 && g_orderedPublicTypes[g_groundRetryOrder[2]]==10);
+    g_predictedDefensive=true;assert(PreparePublicOrder() && g_groundRetryOrder[0]==UINT_MAX);
+    g_publicTypes[0]=9;
     g_publicKnownCounts[0]=0;memset(g_publicQuantityLabels,0,sizeof(g_publicQuantityLabels));
     g_superadminEnabled=true;g_sourceSimpleLayout=true;g_publicCount=2;g_superadminSourceCount=1;
     g_sourceComposition[0]=1;g_sourceComposition[12]=2;
@@ -5422,6 +5452,43 @@ int main() {
             self.assertEqual(build.returncode,0,build.stdout.decode(errors='replace')+build.stderr.decode(errors='replace'))
             completed=subprocess.run([str(temporary/'ground.exe')],capture_output=True)
             self.assertEqual(completed.returncode,0,completed.stderr.decode(errors='replace'))
+        # Execute the renderer's real preparation sequence: the final order
+        # must see the refreshed policy; only the full path admits composition.
+        assembly = 'public_shooters_counted:' + source.split(
+            '    public_shooters_counted:', 1)[1].split('    strategy_order_ready:', 1)[0]
+        assembly = assembly.replace('g_superadminEnabled', '0x302000')
+        assembly += '''
+strategy_order_ready: jmp 0x306000
+restore: jmp 0x306100
+PreparePublicOrder:
+    inc dword ptr [0x302010]
+    mov eax, dword ptr [0x302014]
+    mov dword ptr [0x302018], eax
+    mov al, 1
+    ret
+PrepareKnownHeroPolicy:
+    mov dword ptr [0x302014], 1
+    ret
+ApplySourceComposition:
+    inc dword ptr [0x30201c]
+    mov al, 1
+    ret
+'''
+        code = bytes(keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32).asm(
+            assembly, addr=0x300000)[0])
+        for admin in (0, 1):
+            with self.subTest(order_after_policy_admin=admin):
+                machine = Uc(UC_ARCH_X86, UC_MODE_32)
+                machine.mem_map(0x200000, 65536)
+                machine.mem_map(0x300000, 65536)
+                machine.mem_write(0x300000, code)
+                machine.mem_write(0x302000, bytes([admin]))
+                machine.reg_write(UC_X86_REG_ESP, 0x208000)
+                machine.emu_start(0x300000, 0x306000, count=1000)
+                self.assertEqual(struct.unpack('<4I', machine.mem_read(0x302010, 16)),
+                                 (2, 1, 1, admin))
+                self.assertEqual(machine.mem_read(0x302000, 1)[0], admin)
+                self.assertEqual(machine.reg_read(UC_X86_REG_ESP), 0x208000)
         assembly='primary_model_index:' + source.split('    primary_model_index:',1)[1].split('    unplaced_model_index:',1)[0]
         assembly += '\nunplaced_model_index: jmp 0x306000\nnext_model: jmp 0x306100\nrestore: jmp 0x306200'
         for symbol,address in {'g_candidateIdentity':'0x302000','g_plannedProjectionCount':'0x302004',
@@ -5431,7 +5498,8 @@ int main() {
         code=bytes(keystone.Ks(keystone.KS_ARCH_X86,keystone.KS_MODE_32).asm(assembly,addr=0x300000)[0])
         for phase,admin,defensive,occupied,expected,stop in (
                 (5,1,0,0,4,0x306000),(5,1,0,16,4,0x306100),
-                (5,0,0,16,0,0x306000),(5,1,1,0,0,0x306000),(4,1,0,0,0,0x306000)):
+                (5,0,0,16,4,0x306100),(5,0,0,0,4,0x306000),
+                (5,1,1,0,0,0x306000),(4,1,0,0,0,0x306000)):
             machine=Uc(UC_ARCH_X86,UC_MODE_32);machine.mem_map(0x200000,65536);machine.mem_map(0x300000,65536)
             machine.mem_write(0x300000,code);machine.mem_write(0x302000,struct.pack('<2I',phase,5)+bytes([admin,defensive]))
             machine.mem_write(0x302020,struct.pack('<I',4));machine.mem_write(0x303000+8+908,struct.pack('<I',occupied))
@@ -5592,7 +5660,7 @@ int main() {
         g_outputStorage[8+1536+row*2+x/8]|=1<<(x&7);
     assert(SpreadRowAllowed(0,2) && SpreadRowAllowed(0,7));
     memset(g_outputStorage+8+1536,0,1024);
-    assert(SpreadRowAllowed(-1,5) && SpreadRowAllowed(3,5));
+    assert(SpreadRowAllowed(-1,5) && SpreadRowAllowed(6,5));
     g_creatureDefinition=reinterpret_cast<void*>(1);g_publicCount=3;
     *reinterpret_cast<int*>(g_outputStorage+8+384)=16;
     *reinterpret_cast<int*>(g_outputStorage+8+524)=2;
@@ -5655,6 +5723,7 @@ int main() {
             machine.mem_write(0x303008 + 1396, struct.pack('<I', own_priority))
             machine.reg_write(UC_X86_REG_ESP, 0x208000)
             for row, score in scored_rows:
+                machine.mem_write(0x303008 + 904, struct.pack('<I', row))
                 machine.reg_write(UC_X86_REG_EDI, row)
                 machine.reg_write(UC_X86_REG_EBP, score)
                 machine.emu_start(0x300000, 0x306000, count=1000)
@@ -5830,7 +5899,8 @@ int main() {
         assembly += '\nmodel_loop: jmp 0x306000\nrestore: jmp 0x306100'
         code = bytes(keystone.Ks(keystone.KS_ARCH_X86,keystone.KS_MODE_32).asm(assembly,addr=0x300000)[0])
         for admin, defensive, current, expected, stop in (
-                (0,1,1,0,0x306000),(0,1,0,2,0x306000),(0,1,2,2,0x306100),
+                (0,1,1,0,0x306000),(0,1,0,2,0x306000),(0,1,2,6,0x306000),
+                (0,0,2,3,0x306000),(0,0,4,5,0x306000),(0,0,5,6,0x306000),
                 (1,0,2,3,0x306000),(1,0,4,5,0x306000),(1,0,5,6,0x306000),
                 (1,1,2,6,0x306000)):
             machine = Uc(UC_ARCH_X86, UC_MODE_32)
@@ -5899,6 +5969,9 @@ int main() {
     g_cell[0]=12;g_cell[1]=10;
     g_outputStorage[8+1536+10*2+12/8]|=1<<(12&7);
     assert(ChooseLinkedGoblinCell()==(13<<8|10)); // recorded pack27
+    g_superadminEnabled=false;g_predictionExcludedMask=0x7f;
+    assert(PublicPlacementRole(117)==3 && ChooseLinkedGoblinCell()==(13<<8|10));
+    g_superadminEnabled=true;g_predictionExcludedMask=0;
     g_orderedPublicTypes[0]=118;
     assert(ChooseLinkedGoblinCell()==(13<<8|10)); // 4babf0 resolves the upgraded Goblin's base
     g_orderedPublicTypes[0]=117;
@@ -6090,7 +6163,7 @@ int main() {
     g_protectiveCellCount=1;g_protectiveCells[0]=13;g_protectiveCells[1]=7;
     g_creatureDefinition=reinterpret_cast<void*>(2);
     g_outputStorage[8+1536+6*2+13/8]|=1<<(13&7);
-    g_superadminEnabled=false;assert(ChooseProtectiveCell()==-1);
+    g_superadminEnabled=false;assert(ChooseProtectiveCell()==(13<<8|8));
     g_superadminEnabled=true;assert(ChooseProtectiveCell()==(13<<8|8));
     g_outputStorage[8+1536+8*2+13/8]|=1<<(13&7);
     assert(ChooseProtectiveCell()==-1);

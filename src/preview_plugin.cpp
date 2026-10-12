@@ -712,12 +712,12 @@ int ChooseProtectiveCell() {
     for (int index = 0; index < g_protectiveCellCount; ++index) {
         const int originalColumn = g_protectiveCells[index * 2];
         const int originalRow = g_protectiveCells[index * 2 + 1];
-        const int attempts = g_superadminEnabled && size == 2 ? 2 : 1;
+        const int attempts = size == 2 ? 2 : 1;
         for (int columnAttempt = 0; columnAttempt < attempts; ++columnAttempt) {
           const int x = originalColumn + columnAttempt;
           for (int attempt = 0; attempt < attempts; ++attempt) {
             const int y = originalRow + attempt;
-            if (x - size + 1 < width - 4 || (g_superadminEnabled && x > width - 3)
+            if (x - size + 1 < width - 4 || x > width - 3
                 || y - size + 1 < 1 || y >= height - 1) continue;
             bool free = true;
             for (int row = y - size + 1; row <= y; ++row) {
@@ -764,7 +764,7 @@ bool PlacementHasShooterCategory(uint32_t type) {
     if (source == nullptr) return false;
     // 4bb150 tests the source definition, independently of actor state.
     if (source[0x4c / 4] > 0) return true;
-    if (!g_superadminEnabled || g_sourceSimpleLayout) return false;
+    if (g_superadminEnabled && g_sourceSimpleLayout) return false;
     const auto ability = reinterpret_cast<Ability>(0xb61ba0);
     if (!ability(0x7a, type)) return false;
     // Native category4 also accepts a goblin thrower when a base-type117
@@ -815,7 +815,14 @@ bool PreparePublicOrder() {
     reference.attack = static_cast<float>(peasant[0x44 / 4]);
     uint32_t quantities[7]{};
     for (LONG index = 0; index < g_publicCount; ++index) {
-        if (!g_superadminEnabled) { quantities[index] = g_publicKnownCounts[index]; continue; }
+        if (!g_superadminEnabled) {
+            const int* creature = definition(g_publicTypes[index]);
+            if (creature == nullptr) return false;
+            quantities[index] = g_publicKnownCounts[index];
+            g_publicSortSpeed[index] = creature[0x58 / 4];
+            g_publicSortFlying[index] = reinterpret_cast<const unsigned char*>(creature)[0x60];
+            continue;
+        }
         if (g_superadminSourceGeneration != g_placementGeneration) return false;
         LONG occurrence = 0;
         for (LONG previous = 0; previous < index; ++previous) {
@@ -836,7 +843,7 @@ bool PreparePublicOrder() {
     for (unsigned index = 0; index < 7; ++index) {
         reinterpret_cast<uint32_t*>(g_outputStorage + 8 + 924)[index] = UINT_MAX;
     }
-    const int roleCount = g_superadminEnabled ? 6 : 3;
+    const int roleCount = 6;
     for (int role = 0; role < roleCount; ++role) {
         Pair pairs[7]{};
         unsigned count = 0;
@@ -864,7 +871,7 @@ bool PreparePublicOrder() {
         // Neutral depth2 is the pinned Universe branch currently implemented;
         // other entry/depth paths still require independent reconstruction.
         g_publicSortDistance = *reinterpret_cast<const int*>(g_outputStorage + 8 + 384) - 2 - 6;
-        const uintptr_t comparator = g_superadminEnabled && (!g_predictedDefensive || g_useSpreadRows) && role != 1
+        const uintptr_t comparator = (!g_predictedDefensive || g_useSpreadRows) && role != 1
             ? reinterpret_cast<uintptr_t>(PublicPlacementPairBefore) : 0x85a4f0;
         sort(pairs, pairs + count, comparator);
         for (unsigned index = 0; index < count; ++index) {
@@ -876,12 +883,12 @@ bool PreparePublicOrder() {
         }
     }
     g_plannedProjectionCount = static_cast<int>(destination);
-    if (g_superadminEnabled) {
+    {
         if (!g_predictedDefensive) {
             Pair ground[7]{};
             unsigned count = 0;
             for (LONG index = 0; index < g_publicCount; ++index) {
-                if (g_predictionExcludedMask & (1u << index)) continue;
+                if (g_superadminEnabled && (g_predictionExcludedMask & (1u << index))) continue;
                 const int* creature = definition(g_publicTypes[index]);
                 // Category3 retries every small nonranged troop, including
                 // supports and linked troops that failed an earlier phase.
@@ -896,14 +903,13 @@ bool PreparePublicOrder() {
         }
         int shooters = 0;
         for (LONG index = 0; index < g_publicCount; ++index) {
-            if (g_predictionExcludedMask & (1u << index)) continue;
+            if (g_superadminEnabled && (g_predictionExcludedMask & (1u << index))) continue;
             const int* creature = definition(g_publicTypes[index]);
             if (creature != nullptr && PlacementHasShooterCategory(g_publicTypes[index])) ++shooters;
         }
         *reinterpret_cast<int*>(g_outputStorage + 8 + 780) = shooters;
-        return destination > 0;
     }
-    return destination == static_cast<unsigned>(g_publicCount);
+    return g_superadminEnabled ? destination > 0 : destination == static_cast<unsigned>(g_publicCount);
 }
 
 bool ExcludeWeakestProjection() {
@@ -1162,9 +1168,6 @@ int PublicPlacementRole(uint32_t type) {
     const auto ability = reinterpret_cast<Ability>(0xb61ba0);
     const int* creature = definition(type);
     if (creature == nullptr) return -1;
-    if (!g_superadminEnabled) {
-        return PlacementHasPhysicalShot(type) ? 1 : (creature[0xdc / 4] == 2 ? 0 : 2);
-    }
     if (g_predictedDefensive) {
         if (PlacementHasShooterCategory(type)) return 1;
         return creature[0xdc / 4] == 2 && !ability(0x2f, type) ? 0 : 2;
@@ -1178,7 +1181,7 @@ int PublicPlacementRole(uint32_t type) {
     const uint32_t baseType = creature[0x100 / 4] != 0 ? creature[0x100 / 4] : type;
     if (baseType == 0x75) {
         for (LONG index = 0; index < g_publicCount; ++index) {
-            if (g_predictionExcludedMask & (1u << index)) continue;
+            if (g_superadminEnabled && (g_predictionExcludedMask & (1u << index))) continue;
             const uint32_t carrier = g_publicTypes[index];
             const int* carrierDefinition = definition(carrier);
             if (carrierDefinition != nullptr
@@ -1190,7 +1193,7 @@ int PublicPlacementRole(uint32_t type) {
 }
 
 int ChooseLinkedGoblinCell() {
-    if (!g_superadminEnabled || g_definitionMaximum >= static_cast<uint32_t>(g_publicCount)) return -1;
+    if (g_definitionMaximum >= static_cast<uint32_t>(g_publicCount)) return -1;
     using Definition = const int* (__fastcall*)(uint32_t);
     using Ability = bool (__fastcall*)(uint32_t, uint32_t);
     const auto definition = reinterpret_cast<Definition>(kCreatureDefinition);
@@ -1284,7 +1287,7 @@ int ChooseLinkedGoblinCell() {
 }
 
 bool __cdecl SpreadRowAllowed(int role, int row) {
-    const int lastPrimaryRole = g_superadminEnabled ? 5 : 2;
+    const int lastPrimaryRole = 5;
     if (!g_useSpreadRows || g_spreadFallback || role < 0 || role > lastPrimaryRole) return true;
     // 0x858700 spaces rows by the complete placement-record vector length,
     // even when the current pass places only one role from that vector.
@@ -2971,10 +2974,11 @@ __declspec(naked) void __stdcall RenderPlacementModels(uint32_t owner, uint32_t 
         jz restore
         call PrepareKnownHeroPolicy
         cmp byte ptr [g_superadminEnabled], 0
-        je strategy_order_ready
+        je strategy_composition_ready
         call ApplySourceComposition
         test al, al
         jz restore
+    strategy_composition_ready:
         call PreparePublicOrder
         test al, al
         jz restore
@@ -3014,8 +3018,6 @@ __declspec(naked) void __stdcall RenderPlacementModels(uint32_t owner, uint32_t 
         mov esi, dword ptr [g_outputStorage + 8 + 952]
         cmp esi, dword ptr [g_plannedProjectionCount]
         jae restore
-        cmp byte ptr [g_superadminEnabled], 0
-        je selected_model_index
         cmp byte ptr [g_predictedDefensive], 0
         jne selected_model_index
         cmp dword ptr [g_candidateIdentity], 5
@@ -3027,8 +3029,6 @@ __declspec(naked) void __stdcall RenderPlacementModels(uint32_t owner, uint32_t 
         cmp esi, dword ptr [g_plannedProjectionCount]
         jae restore
         mov dword ptr [g_definitionMaximum], esi
-        cmp byte ptr [g_superadminEnabled], 0
-        je unplaced_model_index
         bt dword ptr [g_outputStorage + 8 + 908], esi
         jc next_model
     unplaced_model_index:
@@ -3055,8 +3055,6 @@ __declspec(naked) void __stdcall RenderPlacementModels(uint32_t owner, uint32_t 
         jne model_role_accepted
         cmp dword ptr [g_candidateIdentity], 6
         jge residual_role
-        cmp byte ptr [g_superadminEnabled], 0
-        je primary_role_match
         cmp byte ptr [g_predictedDefensive], 0
         jne primary_role_match
         cmp dword ptr [g_candidateIdentity], 5
@@ -3064,8 +3062,6 @@ __declspec(naked) void __stdcall RenderPlacementModels(uint32_t owner, uint32_t 
     primary_role_match:
         cmp ecx, dword ptr [g_candidateIdentity]
         jne next_model
-        cmp byte ptr [g_superadminEnabled], 0
-        je model_role_accepted
         cmp byte ptr [g_predictedDefensive], 0
         jne model_role_accepted
         cmp byte ptr [g_useSpreadRows], 0
@@ -3332,8 +3328,6 @@ __declspec(naked) void __stdcall RenderPlacementModels(uint32_t owner, uint32_t 
         call footprint_free
         test eax, eax
         jnz rank_lane
-        cmp byte ptr [g_superadminEnabled], 0
-        je rank_advance
         cmp dword ptr [g_creatureDefinition], 2
         jne rank_advance
         // 857160 tries candidate local row r, then r+1 for a large unit.
@@ -3364,8 +3358,6 @@ __declspec(naked) void __stdcall RenderPlacementModels(uint32_t owner, uint32_t 
         jc lane_done
         cmp dword ptr [g_creatureDefinition], 2
         jne lane_clear
-        cmp byte ptr [g_superadminEnabled], 0
-        je large_lane_previous_row
         cmp edi, 1
         je lane_clear
     large_lane_previous_row:
@@ -3454,8 +3446,6 @@ __declspec(naked) void __stdcall RenderPlacementModels(uint32_t owner, uint32_t 
         jle rank_advance
     rank_save:
         mov dword ptr [g_outputStorage + 8 + 744], edi
-        cmp byte ptr [g_superadminEnabled], 0
-        je rank_save_score
         cmp dword ptr [g_creatureDefinition], 2
         jne rank_save_score
         mov eax, dword ptr [g_outputStorage + 8 + 904]
@@ -3474,16 +3464,7 @@ __declspec(naked) void __stdcall RenderPlacementModels(uint32_t owner, uint32_t 
         je next_model
         // Extended native deployment leaves exhausted spread records unplaced;
         // 8598e0 later scans column0 then column1 through857640/857780.
-        cmp byte ptr [g_superadminEnabled], 0
-        jne next_model
-        cmp byte ptr [g_spreadFallback], 0
-        jne next_model
-        // Preserve the ordinary estimated-mode fallback independently.
-        mov byte ptr [g_spreadFallback], 1
-        mov dword ptr [g_outputStorage + 8 + 744], -1
-        mov dword ptr [g_outputStorage + 8 + 748], -1
-        mov edi, 1
-        jmp rank_next
+        jmp next_model
     rank_selected:
         mov dword ptr [g_outputStorage + 8 + 1360], 1
         mov edi, edx
@@ -3622,21 +3603,14 @@ __declspec(naked) void __stdcall RenderPlacementModels(uint32_t owner, uint32_t 
     ordinary_next_identity:
         inc dword ptr [g_candidateIdentity]
     next_identity_ready:
-        cmp byte ptr [g_superadminEnabled], 0
-        je ordinary_phase_limit
         cmp dword ptr [g_candidateIdentity], 6
         jae primary_passes_done
         jmp phase_continue
-    ordinary_phase_limit:
-        cmp dword ptr [g_candidateIdentity], 3
-        jae restore
     phase_continue:
         mov dword ptr [g_definitionMaximum], 0
         mov dword ptr [g_outputStorage + 8 + 952], 0
         jmp model_loop
     primary_passes_done:
-        cmp byte ptr [g_superadminEnabled], 0
-        je restore
         mov dword ptr [g_candidateIdentity], 6
         jmp residual_column_ready
     residual_pass_done:
