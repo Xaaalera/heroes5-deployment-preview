@@ -2,11 +2,11 @@
 
 ## RU
 
-Экспериментальный прогноз расстановки противника до Start. Обычный режим использует доступную игроку информацию; скрытые количества, грейды и готовую разбивку нейтралов не читает.
+Экспериментальный прогноз расстановки противника до Start. Обычный режим использует доступную игроку информацию. В проверенных обычных охранах «Разведка» или надетая «Корона всевидящего» разрешают точный исходный состав; иначе используются видимые диапазоны. Скрытые грейды и готовое разделение нейтралов в прогноз не поступают.
 
 ## EN
 
-Experimental prediction of enemy placement before Start. Ordinary prediction uses player-visible information, without reading hidden counts, grades or the final neutral split.
+Experimental prediction of enemy placement before Start. Ordinary prediction uses player-visible information. For the tested ordinary guards, Scouting or an equipped Crown of the All-Seeing permits exact source composition; otherwise it uses visible quantity ranges. Hidden upgrades and the final neutral split do not enter the forecast.
 
 ## Документация / Documentation
 
@@ -18,9 +18,9 @@ Experimental prediction of enemy placement before Start. Ordinary prediction use
 - [Game API](https://xaaalera.github.io/heroes5-knowledge/reference/game-api/).
 - [Карта исследований / Research index](https://xaaalera.github.io/heroes5-knowledge/reference/research-index/).
 
-Предиктор собирается через xkit, а готовый пакет запускается обычным способом без SDK. До Start показывается приблизительная расстановка; после начала боя нативная кнопка «Расстановка» открывает прогноз и фактические позиции с пояснениями. Самостоятельный запуск и серия из 273 боёв проверены на текущем кандидате. Область проверки и ограничения описаны на сайте. Обязательные границы — в [архитектурном контракте](https://xaaalera.github.io/heroes5-knowledge/modding/native-projects/#architecture-contract).
+Предиктор собирается через xkit, а готовый пакет запускается обычным способом без SDK. До Start показывается приблизительная расстановка; после начала боя нативная кнопка «Расстановка» открывает прогноз и фактические позиции с пояснениями. Самостоятельный запуск проверен; в объявленной серии полный внутренний расчёт совпал в 273/273 боях, приблизительный прогноз — в 175/213 смешанных боях. Эти результаты относятся к кандидату, а не прежнему выпуску preview.2. Область проверки и ограничения описаны на сайте. Обязательные границы — в [архитектурном контракте](https://xaaalera.github.io/heroes5-knowledge/modding/native-projects/#architecture-contract).
 
-The predictor builds through xkit; its player package uses the normal game launch without the SDK. Before Start it shows an approximate formation. Once combat starts, the native “Расстановка” button opens the forecast and actual positions with explanations. Standalone startup and a 273-battle series were verified on the current candidate. The website describes the tested scope and limitations. Follow the [required architecture contract](https://xaaalera.github.io/heroes5-knowledge/en/modding/native-projects/#architecture-contract).
+The predictor builds through xkit; its player package uses the normal game launch without the SDK. Before Start it shows an approximate formation. Once combat starts, the native “Расстановка” button opens the forecast and actual positions with explanations. Standalone startup passed; in the declared series the internal full calculation matched 273/273 battles and the approximate forecast matched 175/213 mixed battles. These results concern the candidate, not the older preview.2 release. The website describes the tested scope and limitations. Follow the [required architecture contract](https://xaaalera.github.io/heroes5-knowledge/en/modding/native-projects/#architecture-contract).
 
 Текущие инструкции находятся только на сайте. Каждый мод устанавливается отдельно с указанными общими зависимостями; исходники не являются готовым игровым пакетом.
 
