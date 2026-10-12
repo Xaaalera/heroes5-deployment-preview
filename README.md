@@ -28,7 +28,7 @@ The website owns the living instructions. Each mod installs independently with i
 
 ## Standalone use / Работа вне мастерской
 
-Закреплённые зависимости / Pinned dependencies: [xkit `4231ae3`](https://github.com/Xaaalera/heroes5-mod-devkit/tree/4231ae3daa812b38856c7c8c5cbaa99174408ace) · [Game API `58f5ddc`](https://github.com/Xaaalera/heroes5-game-api/tree/58f5ddc74d65b911e4a7e3f4e067c691f9425d5a).
+Закреплённые зависимости / Pinned dependencies: [xkit `84bc5a1`](https://github.com/Xaaalera/heroes5-mod-devkit/tree/84bc5a10b1490e2e38470d85d8cf09d1d3bf151d) · [Game API `43af625`](https://github.com/Xaaalera/heroes5-game-api/tree/43af62523fa19fc93b8be60bff9ff6cf7888f134).
 
 После клонирования выполни `git submodule update --init`. Глобальная мастерская не обязательна. Если ветка объявляет корневую `game-api`, путь `devkit/game-api` должен ссылаться на неё, а не содержать вторую копию; версии должны соответствовать закреплённым коммитам. Различия старых веток описаны в инструкции самостоятельного клона на сайте. В общей мастерской зависимости проверяет её `sync-subrepos`. Рабочие правила — в [AGENTS.md](AGENTS.md).
 
