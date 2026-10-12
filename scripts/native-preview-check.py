@@ -9,7 +9,6 @@ from ctypes import wintypes
 import importlib.util
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import struct
@@ -254,16 +253,6 @@ def control(*arguments):
         raise RuntimeError(str(error)) from error
 
 
-def capture(process_id, label):
-    screen = json.loads(command('powershell', '-ExecutionPolicy', 'Bypass', '-File', str(GAME_UI),
-                                'capture', '-OcrTiles', '-GameProcessId', str(process_id)))
-    image = ROOT / '.local/test-state' / f'native-preview-{process_id}-{label}.png'
-    shutil.copyfile(screen['Image'], image)
-    screen['Image'] = str(image)
-    image.with_suffix('.json').write_text(json.dumps(screen, ensure_ascii=False, indent=2), encoding='utf-8')
-    return screen
-
-
 def diagnostics(process_id):
     # This loader EXE can install an absent DLL. A normal-start acceptance
     # probe must wait for the bootstrap's renderer hook, never install it.
@@ -397,11 +386,7 @@ def complete_battle(process_id, projection, observe=True, hero='Brem', creature_
     if released['models'] != 0 or released['hovered'] != 0:
         raise RuntimeError('Projection survived deployment confirmation: ' + json.dumps(released))
     if projection.get('card_open_before_start'):
-        after_start = capture(process_id, 'after-start')
-        after_text = ' '.join(line['Text'] for line in after_start['Lines']).lower()
-        released['card_cleanup_image'] = after_start['Image']
-        if any(word in after_text for word in ('умения', 'защита', 'падение')):
-            raise RuntimeError('Open projection card survived Start: ' + after_text)
+        released['card_cleanup'] = {'status': 'not_verified', 'reason': 'Requires native UI lifetime diagnostics; image text is not an oracle'}
     observed = control('deployment-observation') if observe else None
     if observe and (observed['sequence'] != armed['sequence'] or not observed['units']):
         raise RuntimeError('No complete after-start observation for this battle: ' + json.dumps(observed))
@@ -474,13 +459,12 @@ def main():
                          help='Developer-only historical EXE startup, without DLL autoloading.')
     parser.set_defaults(startup_mode='auto')
     parser.add_argument('--system-input', action='store_true',
-                        help='Opt in to foreground/shared-cursor input. Requires an exclusive mouse test interval.')
+                        help='Legacy compatibility option; this runner uses process diagnostics and sends no mouse input.')
     parser.add_argument('--offscreen', action='store_true',
                         help='Explicit isolated automation only; never use for a visible user demo.')
     options = parser.parse_args()
     options.auto_load = options.startup_mode == 'auto'
     options.late_install = options.startup_mode == 'late'
-    mouse_options = ['-SystemInput'] if options.system_input else []
     if options.late_install:
         LOADER = BUILD / 'workshop_preview_loader.exe'
         PLUGIN = BUILD / 'WorkshopDeploymentPreview.dll'
@@ -501,7 +485,7 @@ def main():
                                   [] if options.late_install else ['--native-loader'])))
     process_id = launch['pid']
     result = {'pid': process_id, 'native_loader': launch['native_loader'], 'auto_load': options.auto_load, 'battles': [],
-              'input_transport': 'system_mouse' if options.system_input else 'postmessage'}
+              'input_transport': 'process_diagnostics'}
     try:
         if options.offscreen and not options.system_input:
             result['background_window'] = json.loads(command('powershell', '-ExecutionPolicy', 'Bypass', '-File', str(GAME_UI),
@@ -541,88 +525,10 @@ def main():
             command(str(LOADER), '--pid', str(process_id), '--dll', str(PLUGIN))
         control('interact', 'Brem', 'pack_8')
         first = wait_for_models(process_id, 3)
-        result['card_check'] = first
-        viewport = capture(process_id, 'deployment')
-        width, height = viewport['Width'], viewport['Height']
-        first['viewport'] = [width, height]
-        # Obstacles vary between arenas. Locate the public genie projection;
-        # never change an expected grid cell just to match one screenshot.
-        reference_points = [(1000, 430)] + [(x, y) for y in (430, 375) for x in range(525, 1301, 75)]
-        candidates = [(round(x * width / 1744), round(y * height / 1358)) for x, y in reference_points]
-        # Camera rotation can put defenders elsewhere on screen. Check the
-        # battlefield area too, without clicking controls or changing camera.
-        candidates += [(round(x * width / 20), round(y * height / 20))
-                       for y in range(4, 17) for x in range(4, 19)]
-        screen_x, screen_y, hovered = find_projection(process_id, 65, candidates, mouse_options)
-        first['hover_point'] = [screen_x, screen_y]
-        genie = next(footprint for footprint in first['footprints'] if footprint['size'] == 2)
-        if not all(anchor - 1 <= coordinate <= anchor for anchor, coordinate in zip(genie['cell'], hovered['cell'])):
-            raise RuntimeError('Genie hover is outside its reserved square: ' + json.dumps(hovered))
-        before_click = capture(process_id, 'before-rmb')
-        before_click_text = ' '.join(line['Text'] for line in before_click['Lines']).lower()
-        first['text_before_right_click'] = before_click_text
-        first['input_transport'] = result['input_transport']
-        first['clicks'] = []
-        # This public base type has two possible upgrades. RMB must cycle full
-        # reference cards, never the old compact/detailed toggle.
-        for label, hold in (('short-rmb-1', 100), ('short-rmb-2', 100), ('held-rmb', 700)):
-            current = diagnostics(process_id)
-            if current['models'] != 3 or current['hovered'] != 65:
-                raise RuntimeError('Deployment/hover changed before RMB: ' + json.dumps(current))
-            command('powershell', '-ExecutionPolicy', 'Bypass', '-File', str(GAME_UI), 'right-click', *mouse_options,
-                    '-GameProcessId', str(process_id), '-X', str(screen_x), '-Y', str(screen_y),
-                    '-HoldMilliseconds', str(hold))
-            time.sleep(0.25)
-            card = capture(process_id, label)
-            visible_text = ' '.join(line['Text'] for line in card['Lines']).lower()
-            current = diagnostics(process_id)
-            details = (sum(word in visible_text for word in ('мана', 'выстрелы', 'умения', 'защита', 'инициатива',
-                                                             'нападение', 'урон', 'скорость', 'боевой дух', 'удача', 'дальность')) >= 3
-                       and 'существо' in visible_text)
-            first['clicks'].append({'label': label, 'hold_ms': hold, 'text': visible_text,
-                                    'detailed': details, 'image': card['Image'], 'diagnostics': current})
-            # Two independent core fields also exist in the compact card.
-            # The partial stem tolerates the stock font's Н/К OCR confusion.
-            if (current['models'] != 3 or current['hovered'] != 65
-                    or not (details or sum(word in visible_text for word in ('падение', 'защита', 'урон', 'жизни')) >= 2)):
-                raise RuntimeError('Creature card/hover missing after RMB: ' + visible_text)
-        if not all(step['detailed'] for step in first['clicks']):
-            raise RuntimeError('An uncertain-grade projection displayed a compact card')
-        if len({step['text'] for step in first['clicks']}) != 3:
-            raise RuntimeError('Three RMB actions did not produce three distinct public-grade cards')
-        first['card_visible_after_right_click'] = True
-        first['text_after_right_click'] = first['clicks'][0]['text']
-        first['right_click_changed_ocr_text'] = first['clicks'][0]['text'] != before_click_text
-        command('powershell', '-ExecutionPolicy', 'Bypass', '-File', str(GAME_UI), 'move', *mouse_options, '-GameProcessId', str(process_id),
-                '-X', str(round(width * 0.08)), '-Y', str(round(height * 0.55)))
-        time.sleep(0.25)
-        if diagnostics(process_id)['hovered'] != 0:
-            raise RuntimeError('The card dismissal control point still hovers a projection')
-        cleared = capture(process_id, 'cursor-away')
-        clear_text = ' '.join(line['Text'] for line in cleared['Lines']).lower()
-        if any(word in clear_text for word in ('мана', 'выстрелы', 'умения', 'защита', 'падение')):
-            raise RuntimeError('Creature card survived moving onto empty ground: ' + clear_text)
-        # A normal modal must retain input priority above the projection.
-        control('event', 'input_combat_options')
-        command('powershell', '-ExecutionPolicy', 'Bypass', '-File', str(GAME_UI), 'right-click', *mouse_options,
-                '-GameProcessId', str(process_id), '-X', str(screen_x), '-Y', str(screen_y))
-        modal = capture(process_id, 'modal-block')
-        modal_text = ' '.join(line['Text'] for line in modal['Lines']).lower()
-        first['modal_image'] = modal['Image']
-        if 'загрузить' not in modal_text or any(word in modal_text for word in ('защита', 'падение', 'умения')):
-            raise RuntimeError('Combat menu missing or projection card appeared through it: ' + modal_text)
-        control('event', 'close_menu')
-        # Change type, keeping the resulting card open while confirming placement.
-        golem_x, golem_y, golem = find_projection(process_id, 61, candidates, mouse_options)
-        command('powershell', '-ExecutionPolicy', 'Bypass', '-File', str(GAME_UI), 'right-click', *mouse_options,
-                '-GameProcessId', str(process_id), '-X', str(golem_x), '-Y', str(golem_y))
-        golem_card = capture(process_id, 'golem-card')
-        golem_text = ' '.join(line['Text'] for line in golem_card['Lines']).lower()
-        first['type_switch'] = {'hover': golem, 'image': golem_card['Image'], 'text': golem_text}
-        if 'голем' not in golem_text or sum(word in golem_text for word in ('защита', 'падение', 'урон')) < 2:
-            raise RuntimeError('Type change did not display the golem card: ' + golem_text)
-        first['card_open_before_start'] = True
-        result['battles'].append({'pack': 'pack_8', 'projection': first, 'hover': hovered,
+        result['placement_check'] = first
+        result['ui_checks'] = {'status': 'not_run',
+                               'reason': 'This legacy runner checks placement data; use the native UI controls diagnostics for cards and grades'}
+        result['battles'].append({'pack': 'pack_8', 'projection': first,
                                   'result': complete_battle(process_id, first, observe=not options.late_install)})
         for pack, count in (('pack_12', 4), ('pack_15', 7), ('pack_0', 1), ('pack_1', 1)):
             control('interact', 'Brem', pack)

@@ -3016,10 +3016,10 @@ int wmain(int count, wchar_t** arguments) {
                     if arguments[1]=='MB_Button_Ok':level[0]+=1
                 return {'status':'completed'}
             namespace={'control':control,'time':SimpleNamespace(sleep=lambda seconds:None),'json':json,
-                       'diagnostics':lambda pid:{'models':0,'hovered':0},'wait_for_control_queues':lambda:{'stable':True},
-                       'capture':lambda *args:{'Lines':[{'Text':next(screens)}],'Image':'fixture.png'}}
+                       'diagnostics':lambda pid:{'models':0,'hovered':0},'wait_for_control_queues':lambda:{'stable':True}}
             exec(compile(ast.Module(body=[function],type_ignores=[]),'<level-cleanup>','exec'),namespace)
-            result=namespace['complete_battle'](1,{'hero_level_before_start':1},observe=False)
+            result=namespace['complete_battle'](1,{'hero_level_before_start':1,'card_open_before_start':True},observe=False)
+            self.assertEqual(result['release']['card_cleanup']['status'],'not_verified')
             self.assertEqual(events,['skill_1','MB_Button_Ok']*expected)
             self.assertEqual(len(result['levelup_choices']),expected)
             self.assertEqual(result['hero']['level'],1+expected)
