@@ -392,18 +392,21 @@ void UpdateProjectionGlows() {
 
 // Shared pure placement calculations: placement_calculations.hpp.
 
-void CaptureKnownHeroModifiers(const uint32_t* owner) {
+bool CaptureKnownHeroModifiers(const uint32_t* owner) {
     g_knownHeroAttack = -1;
     g_knownHeroBattleFrenzy = false;
-    // Ordinary policy uses base creature statistics and the known own army.
-    // Hero modifiers were explicitly excluded by the owner.
-    if (!g_superadminEnabled) return;
-    if (owner == nullptr || owner[0x98 / 4] == 0) return;
-    const auto* holder = reinterpret_cast<const uint32_t*>(owner[0x98 / 4]);
-    const uint32_t hero = holder[0x10 / 4];
-    if (hero == 0) return;
+    uint32_t hero = 0;
+    __try {
+        if (owner == nullptr || owner[0x98 / 4] == 0) return false;
+        const auto* holder = reinterpret_cast<const uint32_t*>(owner[0x98 / 4]);
+        hero = holder[0x10 / 4];
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    if (hero == 0) return false;
+    // Ordinary policy admits the existence of the player's hero, but does not
+    // read primary statistics or skills. Equal hero-only subset terms cancel.
+    if (!g_superadminEnabled) return true;
     const uint32_t secondary = *reinterpret_cast<const uint32_t*>(hero + 4);
-    if (secondary == 0) return;
+    if (secondary == 0) return true;
     const int32_t offset = *reinterpret_cast<const int32_t*>(secondary);
     const uint32_t statObject = hero + 4 + static_cast<uint32_t>(offset);
     const int value = reinterpret_cast<int(__thiscall*)(const void*)>(0x5d4a40)(
@@ -436,6 +439,7 @@ void CaptureKnownHeroModifiers(const uint32_t* owner) {
         }
         InterlockedIncrement(&g_actorInputSequence);
     }
+    return true;
 }
 
 // Only the visible player's CPlacementInfo records are traversed. Enemy army
@@ -485,7 +489,7 @@ void PrepareKnownHeroPolicy() {
             }
         }
     }
-    CaptureKnownHeroModifiers(owner);
+    const bool knownHeroPresent = CaptureKnownHeroModifiers(owner);
     PrepareSourceComposition(owner);
     PlacementAggregate reference{};
     reference.attack = static_cast<float>(peasant[0x44 / 4]);
@@ -514,6 +518,9 @@ void PrepareKnownHeroPolicy() {
         if (creature[0x4c / 4] > 0) {
             knownShooterDamage += static_cast<double>(damage);
             knownShooterAttackWeight += static_cast<double>(damage) * creature[0x44 / 4];
+            // The large-stack context compares melee subsets. Ranged units
+            // still contribute to the complete army totals above.
+            continue;
         }
         PlacementAggregate candidate{};
         candidate.damage = static_cast<int>(damage);
@@ -527,9 +534,12 @@ void PrepareKnownHeroPolicy() {
         if (creature[0xdc / 4] == 2) large += score;
     }
     const auto* settings = reinterpret_cast<const unsigned char* (__cdecl*)()>(0xbcb3f0)();
-    if (settings != nullptr && total > 0) {
+    if (settings != nullptr && knownHealth > 0) {
         const float threshold = *reinterpret_cast<const float*>(settings + 0xbf4);
-        g_knownHeroLarge = large / total > threshold;
+        // With no melee creatures, both subsets retain the same nonzero hero
+        // contribution in an ordinary hero encounter. Its exact value cancels.
+        const double largeRatio = total > 0 ? large / total : knownHeroPresent ? 1.0 : 0.0;
+        g_knownHeroLarge = largeRatio > threshold;
         if (!g_superadminEnabled && knownDamage > 0 && knownDamage < INT_MAX) {
             // Sorting and strategy share the same admitted count/interval.
             double defenceWeight = 0;

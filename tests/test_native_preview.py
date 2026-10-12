@@ -6117,6 +6117,31 @@ int main() {
     g_placementOwner=nullptr;PrepareKnownHeroPolicy();assert(!g_knownHeroLarge);
     g_placementOwner=owner;owner[4]++;PrepareKnownHeroPolicy();assert(!g_knownHeroLarge);
     owner[4]--;
+    // A ranged stack must not dilute the large/melee ratio. The only melee
+    // stack here is large, even though most of the complete army is ranged.
+    *reinterpret_cast<float*>(settings+0xbf4)=0.55f;
+    definitions[1][0x4c/4]=1;
+    stacks[0][2]=1;stacks[1][2]=100;
+    PrepareKnownHeroPolicy();assert(g_knownHeroLarge);
+    // Retained Archer100 counterexample: with no melee creatures, the same
+    // hero term appears in both subsets and cancels, without reading stats.
+    uint32_t publicHero[8]{},publicHolder[5]{};
+    publicHero[1]=1; // Stat metadata is deliberately inaccessible.
+    publicHolder[4]=reinterpret_cast<uint32_t>(publicHero);
+    owner[0x98/4]=reinterpret_cast<uint32_t>(publicHolder);
+    stacks[0][2]=0;
+    PrepareKnownHeroPolicy();assert(g_knownHeroLarge);
+    assert(g_knownHeroAttack==-1 && !g_knownHeroBattleFrenzy);
+    *reinterpret_cast<float*>(settings+0xbf4)=1.0f;
+    PrepareKnownHeroPolicy();assert(!g_knownHeroLarge); // Strict threshold.
+    *reinterpret_cast<float*>(settings+0xbf4)=0.999f;
+    PrepareKnownHeroPolicy();assert(g_knownHeroLarge);
+    publicHolder[4]=0;
+    PrepareKnownHeroPolicy();assert(!g_knownHeroLarge); // No hero-only term.
+    owner[0x98/4]=1;
+    PrepareKnownHeroPolicy();assert(!g_knownHeroLarge); // Invalid identity.
+    owner[0x98/4]=0;
+    definitions[1][0x4c/4]=0;
     *reinterpret_cast<int*>(g_outputStorage+8+780)=3;
     stacks[0][2]=0;stacks[1][2]=20;PrepareKnownHeroPolicy();assert(!g_predictedDefensive);
     stacks[0][2]=1;stacks[1][2]=0;PrepareKnownHeroPolicy();assert(!g_predictedDefensive);
@@ -6221,7 +6246,7 @@ int main() {
     PrepareKnownHeroPolicy();assert(g_knownHeroAttack==-1 && !g_knownHeroBattleFrenzy);
     hero[4]=1001;
     CaptureKnownHeroModifiers(owner);assert(g_knownHeroAttack==-1);
-    owner[0x98/4]=1; // Inaccessible hero metadata must never be read in ordinary mode.
+    owner[0x98/4]=1; // Unreadable identity must not expose stats or break other estimates.
     PrepareKnownHeroPolicy();assert(g_estimatedSpreadDenominator==baseDenominator);
     owner[0x98/4]=reinterpret_cast<uint32_t>(holder);
     g_superadminEnabled=true;
@@ -7084,7 +7109,7 @@ int main() {
                 cases.append(f'{{{control}, {repr(float(factor))}f, {first}, {second}, {expected}u}}')
         source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
-            'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
+            'struct PlacementAggregate {', 1)[1].split('bool CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
         driver += 'int main() { struct Case { unsigned short control; float factor; int first,second; uint32_t expected; };'
         driver += 'const Case cases[]={' + ','.join(cases) + '};'
@@ -7105,7 +7130,7 @@ int main() {
     def test_owned_defence_selection_uses_frozen_capabilities_strict_thresholds_and_guards(self):
         source = preview_source()
         declarations = 'struct FrozenActorInput {' + source.split('struct FrozenActorInput {', 1)[1].split('void* g_creatureDefinition', 1)[0]
-        core = 'struct PlacementAggregate {' + source.split('struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
+        core = 'struct PlacementAggregate {' + source.split('struct PlacementAggregate {', 1)[1].split('bool CaptureKnownHeroModifiers(', 1)[0]
         builder = 'bool ReadFrozenRunicContribution(' + source.split('bool ReadFrozenRunicContribution(', 1)[1].split('void PrepareSuperadminAggregates()', 1)[0]
         strategy = 'bool BuildFrozenOwnSubset(' + source.split('bool BuildFrozenOwnSubset(', 1)[1].split('void __cdecl CaptureScriptedSource(', 1)[0]
         driver = r'''
@@ -7231,7 +7256,7 @@ int main() {
         declarations = 'struct FrozenActorInput {' + source.split('struct FrozenActorInput {', 1)[1].split(
             'void* g_creatureDefinition', 1)[0]
         core = 'struct PlacementAggregate {' + source.split('struct PlacementAggregate {', 1)[1].split(
-            'void CaptureKnownHeroModifiers(', 1)[0]
+            'bool CaptureKnownHeroModifiers(', 1)[0]
         builder = 'bool ReadFrozenRunicContribution(' + source.split('bool ReadFrozenRunicContribution(', 1)[1].split(
             'void PrepareSuperadminAggregates()', 1)[0]
         driver = '#include <windows.h>\n#include <cstdint>\n#include <cstring>\n#include <cassert>\n'
@@ -7917,7 +7942,7 @@ int main() {
 
         source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
-            'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
+            'struct PlacementAggregate {', 1)[1].split('bool CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
         driver += '\nint main() { struct Case { uint16_t control; BaselineActionFactorInput input; uint32_t expected; };'
         driver += ' const Case cases[] = {' + ','.join(compiled_cases) + '};'
@@ -8002,7 +8027,7 @@ int main() {
             expected.append((raw, sums))
         source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
-            'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
+            'struct PlacementAggregate {', 1)[1].split('bool CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
         driver += '\n#include <cstdio>\nint main() { PlacementAggregate aggregate{}; aggregate.multiplier=1; PlacementWeights weights{};'
         for (damage, attack, factor, category), (raw, sums) in zip(inputs, expected):
@@ -8083,7 +8108,7 @@ int main() {
                         expected=cpu.reg_read(UC_X86_REG_EBP)
                         protection_cases.append(f'{{{control},{health},{capacity},{bits}u,{expected}u}}')
         source=preview_source()
-        implementation='struct PlacementAggregate {'+source.split('struct PlacementAggregate {',1)[1].split('void CaptureKnownHeroModifiers(',1)[0]
+        implementation='struct PlacementAggregate {'+source.split('struct PlacementAggregate {',1)[1].split('bool CaptureKnownHeroModifiers(',1)[0]
         driver='#include <cstdint>\n#include <cstring>\n#include <cassert>\n#include <cstdio>\n'+implementation
         driver+='int main(){ struct Case {unsigned short control; int32_t health; uint32_t flags,scale[2],expected;};'
         driver+='const Case cases[]={'+','.join(cases)+'};'
@@ -8171,7 +8196,7 @@ int main() {
             expected.append((raw, sums))
         source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
-            'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
+            'struct PlacementAggregate {', 1)[1].split('bool CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
         driver += '\nint main() { PlacementAggregate aggregate{}; PlacementWeights weights{};'
         for (health, defence, doubled, actor_type, excluded), (raw, sums) in zip(inputs, expected):
@@ -8231,7 +8256,7 @@ int main() {
         self.assertEqual(struct.unpack('<f', raw[20:24])[0], 1.0)
         source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
-            'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
+            'struct PlacementAggregate {', 1)[1].split('bool CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
         driver += '\nint main() { PlacementAggregate aggregate; PlacementWeights weights;'
         driver += ' InitializePlacementAggregate(aggregate,weights);'
@@ -8305,7 +8330,7 @@ int main() {
             cases.append('{' + str(control_word) + ',' + ','.join(encoded) + '}')
         source = preview_source()
         implementation = 'struct PlacementAggregate {' + source.split(
-            'struct PlacementAggregate {', 1)[1].split('void CaptureKnownHeroModifiers(', 1)[0]
+            'struct PlacementAggregate {', 1)[1].split('bool CaptureKnownHeroModifiers(', 1)[0]
         driver = '#include <cstdint>\n#include <cstring>\n#include <cassert>\n' + implementation
         driver += ('\nint main() { struct Case { uint16_t control; uint32_t input[18], weights[7], expected[18]; };'
                    ' const Case cases[] = {' + ','.join(cases) + '};'
