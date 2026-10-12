@@ -46,7 +46,7 @@ EN: Every new or changed article receives five independent critiques: newcomer c
 - Читать README.md, CONTRIBUTING.md и devkit/AGENTS.md. Devkit закреплён gitlink; не обновлять его молча до main. При обновлении фиксировать проверенную ревизию в README.
 - Сохранять исходные игровые файлы. Не использовать скрытый состав охраны как вход прогноза/справки. Игра и её данные не входят в репозиторий.
 - Установка и тесты используют разные режимы: build/эмуляция не равны свежему игровому подтверждению. В отчёте показывать passed/failed/skipped и непроверенное. Физический ввод не заменяется PostMessage.
-- Изолированные проверки: requirements-dev.txt и scripts/check.py. Для предиктора сначала нужна x86 Release-сборка; отсутствие компилятора/артефакта не считать PASS. Единственный допустимый пропуск у предиктора — явно отмеченный game-EXE oracle, когда игры нет.
+- Изолированные проверки: requirements-dev.txt и scripts/check.py. Сначала нужна x86 Release-сборка нужного типа; отсутствие компилятора или артефакта не считать PASS. Полный профиль не допускает пропусков; границы публичного профиля без игровых файлов определены выше.
 - Не запускать живой сценарий как часть unit-тестов, не забирать общий курсор без согласованного интервала. Следовать авторизованной задаче; обычные безопасные действия не требуют повторных подтверждений.
 - Обязательное независимое review перед push описано в CONTRIBUTING.md; не выдумывать отчёты. RU/EN и wiki-ссылки поддерживаются вместе.
 
@@ -56,7 +56,7 @@ EN: Every new or changed article receives five independent critiques: newcomer c
 
 Read README, CONTRIBUTING and devkit/AGENTS. Devkit is pinned: do not silently track latest main; update the tested revision when changing it. Preserve game files and exclude hidden guard composition from prediction/reference inputs. Do not publish game data.
 
-Build/emulation and a fresh game run are different evidence. Report passed/failed/skipped and unverified scope; PostMessage is not physical-input acceptance. Use requirements-dev and scripts/check.py; predictor needs an x86 Release build first. Missing tools/artifacts cannot yield PASS. Only its explicitly identified absent-game oracle may be skipped.
+Build/emulation and a fresh game run are different evidence. Report passed/failed/skipped and unverified scope; PostMessage is not physical-input acceptance. Use requirements-dev and scripts/check.py with the appropriate x86 Release build. Missing tools/artifacts cannot yield PASS. Full mode permits no skips; the public profile's explicit unavailable-game boundary is defined above.
 
 Unit checks do not launch a game or commandeer shared input. Work within the authorized task without repeated confirmation for ordinary safe actions. Independent pre-push review is mandatory; preserve RU/EN and wiki links.
 
@@ -111,6 +111,11 @@ RU: правило также относится к README, документац
 EN: Apply the same rule to README, documentation, help, descriptions, examples and messages. Explain purpose, starting steps, expected result and recovery in language appropriate to the reader. Define unfamiliar terms on first use; keep internals in developer documentation. A person must be able to follow the instructions without AI filling missing steps.
 
 ## Research branch rules / Правила исследовательской ветки
+
+RU: `npm test` по умолчанию выполняет полный профиль: все найденные проверки, без пропусков, с закреплённым игровым EXE и подходящей нативной DLL. Локальный pre-push принудительно выбирает `H5_TEST_PROFILE=full`, затем проверяет свежую серию боёв. Публичный CI явно использует `H5_TEST_PROFILE=public`: игровые oracle-проверки перечисляются отдельно как невыполненные; все остальные, включая проверки старых экспортов отдельной тестовой DLL, должны пройти без пропусков. Публичный профиль не подтверждает игровые проверки. Не загружать игровые файлы в CI или репозиторий.
+EN: `npm test` defaults to the full profile: every discovered test, no skips, with the pinned game EXE and appropriate native DLL. Local pre-push forces `H5_TEST_PROFILE=full`, then checks the fresh battle campaign. Public CI explicitly uses `H5_TEST_PROFILE=public`: game-oracle cases are listed separately as unexecuted; every other test, including legacy-export checks against a separate test DLL, must pass without skips. Public results do not certify game-oracle coverage. Never upload game files to CI or the repository.
+
+Profile error registry / Каталог ошибок профиля: `tests/preview_support.py` owns `TEST_PROFILE_INVALID` (choose full/public) and `TEST_GAME_ORACLE_REGISTRY_MISMATCH` (align discovery and explicit oracle metadata). The test CLI emits their shared status envelopes; unknown profiles and mismatched registries fail closed. / Неизвестный профиль и несовпадение реестра останавливают проверку; CLI использует общие структурированные ошибки каталога.
 
 ## RU
 

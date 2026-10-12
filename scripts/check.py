@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 import struct
 import sys
+import os
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -423,12 +424,18 @@ def main():
             return 1
 
     suite = unittest.defaultTestLoader.discover(str(ROOT / 'tests'))
+    from preview_support import TEST_PROFILE_ERRORS, select_test_profile
+    profile = os.environ.get('H5_TEST_PROFILE', 'full')
+    try:
+        suite, excluded = select_test_profile(suite, profile)
+    except ValueError as error:
+        print(json.dumps({'ok': False, 'profile': profile, 'error': TEST_PROFILE_ERRORS[str(error)]}))
+        return 1
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    allowed_reasons = {'Pinned game EXE is needed for the native movement oracle',
-                       'Pinned game EXE is needed for the native placement comparator oracle'}
-    unexpected = [(str(test), reason) for test, reason in result.skipped if reason not in allowed_reasons]
+    unexpected = [(str(test), reason) for test, reason in result.skipped]
     passed = result.wasSuccessful() and not unexpected and result.testsRun > 0
-    print(json.dumps({'ok': passed, 'tests_run': result.testsRun, 'failures': len(result.failures),
+    print(json.dumps({'ok': passed, 'profile': profile, 'excluded_oracles': excluded,
+                      'tests_run': result.testsRun, 'failures': len(result.failures),
                       'errors': len(result.errors), 'skipped': [(str(test), reason) for test, reason in result.skipped],
                       'unexpected_skips': unexpected}, ensure_ascii=True))
     return 0 if passed else 1

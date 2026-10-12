@@ -35,6 +35,30 @@ SPEC.loader.exec_module(probe)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_profiles_keep_game_oracles_explicit_and_full_suite_strict(self):
+        from preview_support import GAME_ORACLE_TESTS, select_test_profile
+        suite = unittest.defaultTestLoader.discover(str(MOD_ROOT / 'tests'))
+        full, full_excluded = select_test_profile(suite, 'full')
+        public, excluded = select_test_profile(suite, 'public')
+        full_ids = {test.id() for test in full}
+        public_ids = {test.id() for test in public}
+        excluded_ids = {row['id'] for row in excluded}
+        self.assertEqual(full_excluded, [])
+        self.assertEqual(len(excluded), len(GAME_ORACLE_TESTS))
+        self.assertEqual({name.rsplit('.', 1)[-1] for name in excluded_ids}, GAME_ORACLE_TESTS)
+        self.assertEqual(public_ids | excluded_ids, full_ids)
+        self.assertFalse(public_ids & excluded_ids)
+        self.assertTrue(any('compiled_projection_snapshot' in name for name in public_ids))
+        self.assertTrue(any('compiled_installer_preparation' in name for name in public_ids))
+        with self.assertRaisesRegex(ValueError, 'TEST_PROFILE_INVALID'):
+            select_test_profile(suite, 'unknown')
+        missing = unittest.TestSuite(test for test in full if test.id() != next(iter(excluded_ids)))
+        with self.assertRaisesRegex(ValueError, 'TEST_GAME_ORACLE_REGISTRY_MISMATCH'):
+            select_test_profile(missing, 'public')
+        duplicate = unittest.TestSuite([*full, next(test for test in full if test.id() in excluded_ids)])
+        with self.assertRaisesRegex(ValueError, 'TEST_GAME_ORACLE_REGISTRY_MISMATCH'):
+            select_test_profile(duplicate, 'public')
+
     @staticmethod
     def player_snapshot_fixture(terrain=False):
         public, reference, actual = bytearray(4544), bytearray(124), bytearray(3024)
@@ -846,7 +870,7 @@ class ComparisonTests(unittest.TestCase):
             'read_managed_evidence', 'managed_helper_fingerprints', 'verify_managed_artifacts', 'verify_managed_report', 'verify_report')]
         digest = lambda content: hashlib.sha256(content).hexdigest()
         with tempfile.TemporaryDirectory(prefix='managed-release-binding-') as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             mod, sdk = root / 'mod', root / 'mod/devkit'
             helpers = {'driver': mod / 'scripts/accuracy-campaign.py', 'comparison': mod / 'scripts/check.py',
                        'transport': mod / 'scripts/native-preview-check.py',
@@ -5730,14 +5754,16 @@ int main() {
                 machine.emu_start(0x300000, 0x306000, count=1000)
             self.assertEqual(struct.unpack('<i', machine.mem_read(0x303008 + 744, 4))[0], selected)
 
-    def test_superadmin_source_requires_opt_in_and_expires_with_placement(self):
+    def test_superadmin_aggregate_prologue_matches_pinned_game(self):
         game = WORKSPACE / '.local/test-game/bin/H5_Game.exe'
-        if game.is_file():
-            import pefile
-            executable = pefile.PE(str(game))
+        self.assertTrue(game.is_file(), 'Pinned EXE required for aggregate prologue oracle')
+        self.assertEqual(hashlib.sha256(game.read_bytes()).hexdigest(), probe.HASHES['H5_Game.exe'])
+        import pefile
+        with pefile.PE(str(game), fast_load=True) as executable:
             self.assertEqual(executable.get_data(0xbfacfb - executable.OPTIONAL_HEADER.ImageBase, 3),
                              bytes.fromhex('c2 10 00'))  # Aggregate builder owns all four stack arguments.
-            executable.close()
+
+    def test_superadmin_source_requires_opt_in_and_expires_with_placement(self):
         source = preview_source()
         capture = 'void CaptureSuperadminSource(' + source.split('void CaptureSuperadminSource(', 1)[1].split(
             '// The stock public model', 1)[0]

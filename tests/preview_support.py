@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import unittest
 
 MOD_ROOT = Path(__file__).resolve().parents[1]
 DEVKIT = (MOD_ROOT / 'devkit').resolve()
@@ -96,3 +97,73 @@ def preview_source():
         "// Shared pure placement calculations: placement_calculations.hpp.\n\n", body
     ).replace('using namespace h5_preview;', '').replace('#include "placement_calculations.hpp"', '').replace(
         '#include "../game-api/include/h5/actor_input.hpp"', '')
+
+
+# Original-instruction comparisons require the private, hash-pinned game EXE.
+GAME_ORACLE_TESTS = frozenset({
+    'test_exhausted_spread_keeps_stack_for_native_residual_column_pass',
+    'test_health_scale_matches_native_flag_status_and_integer_conversion',
+    'test_hero_action_correction_matches_original_scalar_arithmetic',
+    'test_hero_attack_target_scalar_rounds_remaining_unit_hp_and_clamps_to_one',
+    'test_hero_baseline_interpolation_matches_original_tier_level_and_scalar_boundaries',
+    'test_native_battle_rng_uses_two_steps_and_signed_shift',
+    'test_native_initial_action_factor_includes_initiative_speed_and_atb',
+    'test_native_simple_failure_keeps_partial_cells_and_fallback_fills_front_rows',
+    'test_native_spread_shooter_sort_keeps_original_row_before_anchor_shift',
+    'test_owned_aggregate_initialization_seeds_action_before_damage',
+    'test_owned_aggregate_normalization_matches_original_words_and_zero_gates',
+    'test_owned_area_spell_power_matches_original_four_and_ten_turn_paths',
+    'test_owned_damage_accumulation_matches_original_categories_and_rounding',
+    'test_owned_health_accumulation_matches_native_subset_and_distinct_defence',
+    'test_owned_physical_area_power_matches_original_shot_and_melee_branches',
+    'test_owned_spread_denominator_matches_original_power_and_conditional_extra',
+    'test_protective_placement_matches_original_candidates_and_footprints',
+    'test_public_movement_range_obeys_costs_obstacles_flight_and_full_footprints',
+    'test_runic_contribution_matches_original_descriptor_states',
+    'test_source_composition_matches_original_rng_grade_and_quantity_branches',
+    'test_source_fallback_matches_native_mixed_column_passes',
+    'test_source_strength_matches_original_staged_conversions',
+    'test_special_damage_category_matches_original_flags_and_exclusion_priority',
+    'test_split_simple_cells_match_original_whole_uniform_placement',
+    'test_superadmin_aggregate_prologue_matches_pinned_game',
+    'test_superadmin_role_comparator_matches_original_engine_at_flight_speed_and_score_boundaries',
+})
+
+
+TEST_PROFILE_ERRORS = {
+    'TEST_PROFILE_INVALID': {
+        'code': 400, 'status': 'INVALID_ARGUMENT',
+        'message': 'Set H5_TEST_PROFILE to full or public.',
+        'details': [{'@type': 'ErrorInfo', 'reason': 'TEST_PROFILE_INVALID',
+                     'domain': 'heroes5.deployment-preview.tests', 'metadata': {}}],
+    },
+    'TEST_GAME_ORACLE_REGISTRY_MISMATCH': {
+        'code': 412, 'status': 'FAILED_PRECONDITION',
+        'message': 'Update the game-oracle registry to match each discovered oracle exactly once.',
+        'details': [{'@type': 'ErrorInfo', 'reason': 'TEST_GAME_ORACLE_REGISTRY_MISMATCH',
+                     'domain': 'heroes5.deployment-preview.tests', 'metadata': {}}],
+    },
+}
+
+
+def select_test_profile(suite, profile):
+    """Select public cases explicitly; never turn an unavailable oracle into PASS."""
+    if profile not in ("full", "public"):
+        raise ValueError('TEST_PROFILE_INVALID')
+    pending = list(suite)
+    selected, excluded, discovered_oracles = [], [], []
+    while pending:
+        test = pending.pop(0)
+        if isinstance(test, unittest.TestSuite):
+            pending[0:0] = list(test)
+            continue
+        oracle = test.id().rsplit(".", 1)[-1] in GAME_ORACLE_TESTS
+        if oracle:
+            discovered_oracles.append(test.id().rsplit(".", 1)[-1])
+        if profile == "public" and oracle:
+            excluded.append({"id": test.id(), "reason": "requires private pinned game EXE oracle"})
+        else:
+            selected.append(test)
+    if set(discovered_oracles) != GAME_ORACLE_TESTS or len(discovered_oracles) != len(GAME_ORACLE_TESTS):
+        raise ValueError('TEST_GAME_ORACLE_REGISTRY_MISMATCH')
+    return unittest.TestSuite(selected), excluded

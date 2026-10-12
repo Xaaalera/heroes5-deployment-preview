@@ -10,5 +10,5 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     exit 1
   fi
 done
-npm run review:gate
+H5_TEST_PROFILE=full npm run review:gate
 python -X utf8 scripts/accuracy-campaign.py --verify-latest
