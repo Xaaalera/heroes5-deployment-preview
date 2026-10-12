@@ -2921,7 +2921,7 @@ int wmain(int count, wchar_t** arguments) {
         namespace['control']=Mock(return_value=states[0]);namespace['time'].monotonic=Mock(side_effect=[0,0,2])
         with self.assertRaisesRegex(RuntimeError,'queues did not drain'):namespace['wait_for_control_queues'](timeout=1)
 
-    def test_capture_failure_does_not_hide_native_failure_diagnostics(self):
+    def test_campaign_failure_uses_native_diagnostics_without_capturing_images(self):
         import ast
         from types import SimpleNamespace
         from unittest.mock import Mock
@@ -2931,8 +2931,7 @@ int wmain(int count, wchar_t** arguments) {
         handler = next(node.handlers[0] for node in function.body
                        if isinstance(node, ast.Try) and node.handlers)
         primary = RuntimeError('Projection readiness timed out')
-        command = Mock(side_effect=[RuntimeError('Game capture contains no rendered content'),
-                                   json.dumps({'frozen': False}), json.dumps({'generation': 0})])
+        command = Mock(side_effect=[json.dumps({'frozen': False}), json.dumps({'generation': 0})])
         run = {}; save = Mock()
         namespace = {'primary': primary, 'Exception': Exception, 'json': json, 'run': run, 'pid': 1,
                      'report': {'mode': 'superadmin_source_research'}, 'destination': 'report.json',
@@ -2944,7 +2943,9 @@ int wmain(int count, wchar_t** arguments) {
         tree = ast.fix_missing_locations(ast.Module(body=[body], type_ignores=[]))
         with self.assertRaisesRegex(RuntimeError, 'Projection readiness timed out'):
             exec(compile(tree, '<failure-diagnostics>', 'exec'), namespace)
-        self.assertEqual(run['failure_capture_error'], 'Game capture contains no rendered content')
+        self.assertEqual(command.call_count, 2)
+        self.assertTrue(all(call.args[0] == 'loader.exe' for call in command.call_args_list))
+        self.assertNotIn('failure_capture_error', run)
         self.assertEqual(run['failure_owned_inputs'], {'frozen': False})
         self.assertEqual(run['failure_source_trace'], {'generation': 0})
         self.assertNotIn('failure_image', run)

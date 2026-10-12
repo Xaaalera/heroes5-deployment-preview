@@ -2209,14 +2209,6 @@ def run_map(round_number, fixture, report, destination, creature_names, backgrou
     except Exception as error:
         run['error'] = str(error)
         try:
-            capture = json.loads(check.command('powershell', '-NoProfile', '-File', str(check.GAME_UI),
-                                              '-Action', 'capture', '-GameProcessId', str(pid)))
-            image = check.ROOT / f'.local/test-state/accuracy-failure-{pid}.png'
-            shutil.copyfile(capture['Image'], image)
-            run['failure_image'] = str(image)
-        except Exception as diagnostic_error:
-            run['failure_capture_error'] = str(diagnostic_error)
-        try:
             run['failure_deployment_observation'] = check.control('deployment-observation')
             run['failure_runtime_state'] = check.control('runtime-state')
             run['failure_diagnostics'] = check.diagnostics(pid)
