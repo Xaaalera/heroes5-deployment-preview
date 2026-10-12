@@ -1,0 +1,106 @@
+{
+  "diffHash": "f49dad37361b791fff0f537b7a2f56e40a5bafb187513eea5f2d932b7507ca3b",
+  "commitSha": "d9e91c5862912177572b0afd4b546b34214d6a1c",
+  "perAgent": {
+    "craft": {
+      "score": 8,
+      "verdict": "PASS",
+      "reviewer": "/root/predictor_final_craft",
+      "evidence": {
+        "record": "predictor-final-source-craft-final.json",
+        "sha256": "022a400129abfca973a2e7b8fb37eef75aa1e69dd07c08bc966ba4eac968ffb2",
+        "head": "d9e91c5862912177572b0afd4b546b34214d6a1c",
+        "officialCumulativeDiffHash": "f49dad37361b791fff0f537b7a2f56e40a5bafb187513eea5f2d932b7507ca3b"
+      }
+    },
+    "architecture": {
+      "score": 9,
+      "verdict": "PASS",
+      "reviewer": "/root/predictor_final_architecture",
+      "evidence": {
+        "record": "predictor-final-source-architecture-final.json",
+        "sha256": "2d63d5aff5f7a5bb58dd447608e5e9e9bc3fe7353ad6d1f96cc24894a26c1599",
+        "head": "d9e91c5862912177572b0afd4b546b34214d6a1c",
+        "officialCumulativeDiffHash": "f49dad37361b791fff0f537b7a2f56e40a5bafb187513eea5f2d932b7507ca3b"
+      }
+    },
+    "tests": {
+      "score": 9,
+      "verdict": "PASS",
+      "reviewer": "/root/predictor_final_tests",
+      "evidence": {
+        "record": "predictor-final-source-tests-review.json",
+        "sha256": "363a4e4707cba3b48999b53acaeffe53d22c6897596272a4179491c0de601688",
+        "head": "d9e91c5862912177572b0afd4b546b34214d6a1c",
+        "officialCumulativeDiffHash": "f49dad37361b791fff0f537b7a2f56e40a5bafb187513eea5f2d932b7507ca3b"
+      }
+    },
+    "docs": {
+      "score": 10,
+      "verdict": "PASS",
+      "reviewer": "/root/predictor_final_docs",
+      "evidence": {
+        "record": "predictor-final-source-docs-followup.json",
+        "sha256": "f89f46778da0155b6fed284a66fb3afc3eceb37becb7beb91a296bd62ea3d632",
+        "head": "d9e91c5862912177572b0afd4b546b34214d6a1c",
+        "officialCumulativeDiffHash": "f49dad37361b791fff0f537b7a2f56e40a5bafb187513eea5f2d932b7507ca3b"
+      },
+      "review": {
+        "reviewer": "/root/predictor_final_docs",
+        "files": [
+          "AGENTS.md",
+          "CONTRIBUTING.md",
+          "README.md"
+        ],
+        "criteria": {
+          "purpose": {
+            "verdict": "PASS",
+            "evidence": "README lines 1-6 states the player-facing purpose; AGENTS lines 1-28 and 30-40 set agent obligations; CONTRIBUTING links the canonical contribution standard."
+          },
+          "structure": {
+            "verdict": "PASS",
+            "evidence": "README is a short entry point with website links; CONTRIBUTING is a two-language pointer; AGENTS uses scoped working-rule headings, although one heading is corrupted (finding 3)."
+          },
+          "specificity": {
+            "verdict": "PASS",
+            "evidence": "Follow-up d9e91c: AGENTS current full/ordinary policy replaces contradictory historical instructions; README names the native after-Start button and the tested Scouting/Crown exception."
+          },
+          "reproducibility": {
+            "verdict": "PASS",
+            "evidence": "README links the canonical installation and standalone-clone guides and gives git submodule update --init; .gitmodules and HEAD gitlinks match the listed xkit and Game API hashes. No claim is made that docs alone reproduce live acceptance."
+          },
+          "evidence": {
+            "verdict": "PASS",
+            "evidence": "README explicitly separates candidate internal 273/273 reference matches from approximate 175/213 mixed-battle matches. Prior accepted package/campaign receipt remains bounded; no new campaign freshness is claimed."
+          },
+          "applicability": {
+            "verdict": "PASS",
+            "evidence": "README identifies experimental status and player package versus source; AGENTS separates SDK development from normal independent DLL/H5U player launch. Canonical player article still labels preview.2 as the downloadable release and current candidate as unshipped; publication is pending, not evidence that preview.2 has current features."
+          },
+          "translations": {
+            "verdict": "PASS",
+            "evidence": "RU/EN policy and bounded metrics are parallel in README; AGENTS RU heading is readable and its RU/EN current-policy blocks agree."
+          },
+          "maintenance": {
+            "verdict": "PASS",
+            "evidence": "Canonical website remains the living manual and preview.2 remains the downloadable older release pending coordinated publication; source docs now distinguish candidate evidence and old release."
+          }
+        },
+        "findings": []
+      }
+    },
+    "security": {
+      "score": 10,
+      "verdict": "PASS",
+      "reviewer": "/root/predictor_final_security",
+      "evidence": {
+        "record": "predictor-final-source-security-followup.json",
+        "sha256": "dd70d23ead231ab983d057566366b36aa0b3c17e1d66b124858e972e4cc4fe2c",
+        "head": "d9e91c5862912177572b0afd4b546b34214d6a1c",
+        "officialCumulativeDiffHash": "f49dad37361b791fff0f537b7a2f56e40a5bafb187513eea5f2d932b7507ca3b"
+      }
+    }
+  },
+  "overall": "PASS",
+  "timestamp": "2026-10-12T11:08:37.234Z"
+}
