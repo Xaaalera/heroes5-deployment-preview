@@ -199,7 +199,36 @@ const uint32_t* g_detailsNativeMethods = nullptr;
 unsigned g_detailsProjectionSlot = 7;
 LONG g_detailsRotatorGeneration = -1;
 
-void ObserveProjectionWindowInput(UINT message, LPARAM lparam) {
+bool ObserveProjectionWindowInput(UINT message, LPARAM lparam) {
+    // Windows replaces the second rapid right-button down with DBLCLK.
+    // The native card provider handles only the ordinary down notification.
+    if (message == WM_RBUTTONDBLCLK && g_projectionScreen != nullptr
+        && g_tooltipController != nullptr && HoveredProjectionSlot() >= 0
+        && reinterpret_cast<bool (__thiscall*)(void*)>(0x669e10)(g_projectionScreen)) {
+        auto* provider = reinterpret_cast<uint32_t*>(g_tooltipController[0x44 / 4]);
+        if (provider != nullptr && *provider == 0xe34b74) {
+            alignas(16) unsigned char floatingState[512];
+            __asm { lea eax, floatingState }
+            __asm { fxsave [eax] }
+            __try {
+                auto* root = reinterpret_cast<uint32_t*>(g_projectionScreen[0xa0 / 4]);
+                if (root != nullptr) {
+                    auto* window = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(root)
+                        + reinterpret_cast<const uint32_t*>(root[1])[2] + 4);
+                    const int point[]{static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))};
+                    g_detailsHitTest = true;
+                    const bool blocked = reinterpret_cast<bool (__thiscall*)(void*, const int*)>(
+                        reinterpret_cast<const uint32_t*>(window[0])[0x34 / 4])(window, point);
+                    g_detailsHitTest = false;
+                    if (!blocked) { return true; }
+                }
+            } __finally {
+                g_detailsHitTest = false;
+                __asm { lea eax, floatingState }
+                __asm { fxrstor [eax] }
+            }
+        }
+    }
     if ((message == WM_LBUTTONDBLCLK || g_detailsSlot >= 0) && g_projectionScreen != nullptr) {
         if (!reinterpret_cast<bool (__thiscall*)(void*)>(0x669e10)(g_projectionScreen)) {
             g_detailsSlot = -1;
@@ -213,11 +242,13 @@ void ObserveProjectionWindowInput(UINT message, LPARAM lparam) {
             }
         }
     }
+    return false;
 }
 
 LRESULT CALLBACK ProjectionWindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
-    ObserveProjectionWindowInput(message,lparam);
-    return CallWindowProcW(g_originalGameWindowProc, window, message, wparam, lparam);
+    const bool rightClick = ObserveProjectionWindowInput(message,lparam);
+    return CallWindowProcW(g_originalGameWindowProc, window,
+        rightClick ? WM_RBUTTONDOWN : message, wparam, lparam);
 }
 
 BOOL CALLBACK FindProjectionWindow(HWND window, LPARAM) {

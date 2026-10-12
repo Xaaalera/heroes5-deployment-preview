@@ -857,9 +857,17 @@ class ComparisonTests(unittest.TestCase):
                 path.write_bytes(name.encode())
             bridge = sdk / 'native/plugin_bridge.cpp'
             bridge.write_bytes(b'shared bridge')
+            (mod / 'xalkit.json').write_text('{"resource_project":"resources"}')
+            (mod / 'resources').mkdir()
+            (mod / 'resources/mod.json').write_text('{"id":"deployment-preview-ui"}')
+            resource_member = 'UserMODs/workshop-deployment-preview-ui.h5u'
+            resource_bytes = io.BytesIO()
+            with ZipFile(resource_bytes, 'w') as resource:
+                resource.writestr('UI/DeploymentPreview/Caption.txt', b'caption')
             game_files = {'bin/Heroes5Mods/Plugins/deployment-preview.dll': b'player DLL',
                           'bin/dinput8.dll': b'loader', 'bin/d3d9.dll': b'facade',
-                          'bin/d3d9.universe.dll': b'original Universe', 'bin/H5_Game.exe': b'game EXE'}
+                          'bin/d3d9.universe.dll': b'original Universe', 'bin/H5_Game.exe': b'game EXE',
+                          resource_member: resource_bytes.getvalue()}
             for name, content in game_files.items():
                 path = root / '.local/test-game' / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -869,7 +877,9 @@ class ComparisonTests(unittest.TestCase):
                         'loader_sha256': digest(game_files['bin/dinput8.dll']),
                         'graphics_facade_sha256': digest(game_files['bin/d3d9.dll']),
                         'graphics_original_sha256': digest(game_files['bin/d3d9.universe.dll']),
-                        'bridge_source_sha256': digest(bridge.read_bytes())}
+                        'bridge_source_sha256': digest(bridge.read_bytes()),
+                        'resources': {resource_member: digest(game_files[resource_member])},
+                        'resource_source_hashes': {'mod.json': digest((mod / 'resources/mod.json').read_bytes())}}
             package = root / 'player.zip'
             with ZipFile(package, 'w') as archive:
                 for name, content in game_files.items():
@@ -896,7 +906,7 @@ class ComparisonTests(unittest.TestCase):
             source_guard = Mock()
             data_guard = Mock(return_value={'mixed_full_matches': 14, 'mixed_battles': 20,
                                             'reference_full_matches': 30, 'battles': 30})
-            namespace = {'Path': Path, 'hashlib': hashlib, 'json': json, 'ZipFile': ZipFile,
+            namespace = {'Path': Path, 'hashlib': hashlib, 'json': json, 'ZipFile': ZipFile, 're': re,
                          'MOD': mod, '__file__': str(helpers['driver']),
                          'check': SimpleNamespace(ROOT=root, DEVKIT=sdk, PROBE=helpers['probe']),
                          'sha256': lambda path: digest(path.read_bytes()),
@@ -914,11 +924,32 @@ class ComparisonTests(unittest.TestCase):
             self.assertEqual(source_guard.call_args_list[0].args[0], report)
             self.assertEqual(source_guard.call_args_list[1].args[0], manifest)
             self.assertEqual(data_guard.call_args.args[0], report)
+            resource_recipe = mod / 'resources/mod.json'
+            original_recipe = resource_recipe.read_bytes()
+            resource_recipe.write_bytes(original_recipe + b' ')
+            with self.assertRaisesRegex(RuntimeError, 'resource sources changed after player packaging'):
+                verify(report)
+            resource_recipe.write_bytes(original_recipe)
             stale_archive = copy.deepcopy(report)
             stale_archive['package']['sha256'] = 'stale'
             with self.assertRaisesRegex(RuntimeError, 'player archive changed'):
                 verify(stale_archive)
             original_package = package.read_bytes()
+            for omit_manifest_dependency in (True, False):
+                missing_manifest = copy.deepcopy(manifest)
+                if omit_manifest_dependency:
+                    missing_manifest.pop('resources')
+                with ZipFile(package, 'w') as archive:
+                    for name, content in game_files.items():
+                        if name not in ('bin/d3d9.universe.dll', 'bin/H5_Game.exe', resource_member):
+                            archive.writestr(name, content)
+                    archive.writestr('release.json', json.dumps(missing_manifest))
+                missing_resource = copy.deepcopy(report)
+                missing_resource['package']['sha256'] = digest(package.read_bytes())
+                with self.subTest(omitted_resource_manifest=omit_manifest_dependency):
+                    with self.assertRaisesRegex(RuntimeError, 'resource dependenc'):
+                        verify(missing_resource)
+            package.write_bytes(original_package)
             with ZipFile(package, 'w') as archive:
                 for name, content in game_files.items():
                     if name not in ('bin/d3d9.universe.dll', 'bin/H5_Game.exe'):
@@ -934,7 +965,7 @@ class ComparisonTests(unittest.TestCase):
             package.write_bytes(original_package)
             startup_path.write_bytes(json.dumps(startup).encode())
             for name in ['bin/Heroes5Mods/Plugins/deployment-preview.dll', 'bin/dinput8.dll',
-                         'bin/d3d9.dll', 'bin/d3d9.universe.dll']:
+                         'bin/d3d9.dll', 'bin/d3d9.universe.dll', resource_member]:
                 path = root / '.local/test-game' / name
                 path.write_bytes(game_files[name] + b' changed')
                 with self.subTest(changed_installed_file=name):
@@ -1142,6 +1173,112 @@ class ComparisonTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'resident data is missing, ambiguous or invalid'):
                     namespace['ManagedPlayerSession'](record, root / 'client', probe)
                 factory.assert_not_called()
+
+    def test_native_ui_uncertain_creation_and_removal_preserve_recovery(self):
+        if not vcvarsall().is_file():
+            self.fail('MSVC is required for the native UI lifetime regression')
+        driver = r'''#include "../game-api/include/h5/native_ui.hpp"
+#include <map>
+#include <vector>
+#include <cassert>
+#include <string>
+namespace fixture {
+struct Node { std::string name; std::vector<uint32_t> children; };
+std::map<uint32_t,Node> nodes;
+std::vector<uint32_t> added;
+uint32_t next=100,addCount=1,removeCalls=0;
+bool knownHandle=false,queueRemoval=false,rootReadable=true,rootPresent=true;
+}
+namespace h5::ui {
+template<class Reader> bool FakeReadWindow(Reader&,uint32_t id,NativeWindowSnapshot& output) {
+ const auto found=fixture::nodes.find(id);if(found==fixture::nodes.end()) { return false; }
+ output={};output.interfaceAddress=id;output.width=1225;output.height=768;
+ strcpy_s(output.name,found->second.name.c_str());return true;
+}
+template<class Reader> bool FakeReadChildren(Reader&,uint32_t id,std::array<uint32_t,128>& output,uint32_t& count) {
+ output={};count=0;const auto found=fixture::nodes.find(id);if(found==fixture::nodes.end()) { return false; }
+ count=static_cast<uint32_t>(found->second.children.size());std::copy(found->second.children.begin(),found->second.children.end(),output.begin());return true;
+}
+template<class Reader> bool FakeReadCombat(Reader&,uint32_t& output) { output=1;return true; }
+template<class Reader> bool FakeRootPresence(Reader&,uint32_t,bool& present) {
+ present=false;if(!fixture::rootReadable) { return false; }present=fixture::rootPresent;return true;
+}
+NativeWindowMutation FakeVisible(HWND,uint32_t id,bool) { return {NativeWindowMutationState::Completed,id}; }
+NativeWindowMutation FakePlace(HWND,uint32_t id,float,float,float,float,uint32_t) { return {NativeWindowMutationState::Completed,id}; }
+NativeWindowMutation FakeModal(HWND,uint32_t id,bool) { return {NativeWindowMutationState::Completed,id}; }
+NativeWindowMutation FakeCreate(HWND,uint32_t parent,uint32_t model) {
+ fixture::added.clear();
+ for(uint32_t index=0;index<fixture::addCount;++index) {
+  const auto id=fixture::next++;fixture::nodes[id]={fixture::nodes.at(model).name,{}};
+  fixture::nodes.at(parent).children.push_back(id);fixture::added.push_back(id);
+ }
+ return {NativeWindowMutationState::Unconfirmed,fixture::knownHandle&&!fixture::added.empty()?fixture::added[0]:0};
+}
+NativeWindowMutation FakeRemove(HWND,uint32_t parent,uint32_t child) {
+ ++fixture::removeCalls;
+ if(fixture::queueRemoval) { return {NativeWindowMutationState::Unconfirmed,child}; }
+ auto& children=fixture::nodes.at(parent).children;children.erase(std::find(children.begin(),children.end(),child));fixture::nodes.erase(child);
+ return {NativeWindowMutationState::Completed,child};
+}
+}
+#define ReadNativeWindow FakeReadWindow
+#define ReadNativeWindowChildren FakeReadChildren
+#define ReadNativeCombatRoot FakeReadCombat
+#define ReadNativeCombatRootPresence FakeRootPresence
+#define SetNativeWindowVisible FakeVisible
+#define SetNativeWindowPlacement FakePlace
+#define SetNativeWindowModalInput FakeModal
+#define CreateNativeWindowChild FakeCreate
+#define RemoveNativeWindowChild FakeRemove
+#include "native_comparison_window.hpp"
+int main() {
+ using namespace h5_preview;
+ fixture::nodes={{1,{"CombatScreen",{2}}},{2,{"DeploymentOverlay",{3}}},
+  {3,{"DeploymentPanel",{4,5,6,7,8,9,10,11,12,13,14,15}}},
+  {4,{"DeploymentDetails",{}}},{5,{"DeploymentStatus",{}}},{6,{"DeploymentClose",{}}},
+  {7,{"DeploymentCellTemplate",{}}},{8,{"DeploymentRowTemplate",{}}},{9,{"DeploymentRosterTemplate",{}}},
+  {10,{"DeploymentForecastGrid",{}}},{11,{"DeploymentActualGrid",{}}},
+  {12,{"DeploymentTitle",{}}},{13,{"DeploymentForecastTitle",{}}},{14,{"DeploymentActualTitle",{}}},
+  {15,{"DeploymentDetailsScroll",{16}}},{16,{"DeploymentDetailsBorder",{}}}};
+ const auto baseline=fixture::nodes.size();int positions[1][5]{};bool visible[1][2]{};wchar_t details[1][1536]{};PlacementFieldSnapshot field{};
+ NativeComparisonContent content{12,10,1,1,1,positions,visible,details,L"status",&field,[](int row){return row;}};
+ const auto game=reinterpret_cast<HWND>(uintptr_t{1});
+ // Unknown returned handle is recovered from the parent's before/after tree.
+ assert(!NativeComparisonWindow::Show(game,1,content,0));assert(fixture::added.size()==1);
+ fixture::rootReadable=false;assert(!NativeComparisonWindow::Reset());assert(fixture::nodes.size()==baseline+1);assert(!fixture::removeCalls);
+ fixture::rootReadable=true;
+ assert(NativeComparisonWindow::Reset());assert(fixture::nodes.size()==baseline);assert(fixture::removeCalls==1);
+ // A known handle whose removal is queued remains owned. No replay on retry.
+ fixture::knownHandle=true;fixture::queueRemoval=true;
+ assert(!NativeComparisonWindow::Show(game,1,content,0));const auto queued=fixture::added[0];
+ assert(!NativeComparisonWindow::Reset());const auto submitted=fixture::removeCalls;
+ fixture::rootReadable=false;assert(!NativeComparisonWindow::Reset());assert(fixture::removeCalls==submitted);fixture::rootReadable=true;
+ assert(!NativeComparisonWindow::Reset());assert(fixture::removeCalls==submitted);assert(fixture::nodes.count(queued));
+ auto& children=fixture::nodes.at(10).children;children.erase(std::find(children.begin(),children.end(),queued));fixture::nodes.erase(queued);
+ assert(NativeComparisonWindow::Reset());assert(fixture::nodes.size()==baseline);
+ // Ambiguous effects are quarantined instead of deleting guessed children.
+ fixture::knownHandle=false;fixture::queueRemoval=false;fixture::addCount=2;
+ assert(!NativeComparisonWindow::Show(game,1,content,0));const auto beforeAmbiguous=fixture::removeCalls;
+ assert(!NativeComparisonWindow::Reset());assert(fixture::removeCalls==beforeAmbiguous);
+ for(const auto child:fixture::added) { fixture::nodes.erase(child); }fixture::nodes.at(10).children.clear();
+ assert(NativeComparisonWindow::Reset());assert(fixture::nodes.size()==baseline);
+ // Unconfirmed creation with no observed effect does not invent a removal.
+ fixture::addCount=0;assert(!NativeComparisonWindow::Show(game,1,content,0));
+ assert(NativeComparisonWindow::Reset());assert(fixture::removeCalls==beforeAmbiguous);
+}
+'''
+        with tempfile.TemporaryDirectory(prefix='h5-native-ui-lifetime-') as directory:
+            temporary = Path(directory)
+            (temporary / 'native_ui_lifetime.cpp').write_text(driver, encoding='utf-8')
+            (temporary / 'build.cmd').write_text(
+                f'@call "{vcvarsall()}" x86 >nul\n@if errorlevel 1 exit /b 1\n'
+                f'@cl /nologo /EHsc /O2 /std:c++20 /DNOMINMAX /DWIN32_LEAN_AND_MEAN '
+                f'/I"{MOD_ROOT / "src"}" /Fe:native_ui_lifetime.exe native_ui_lifetime.cpp user32.lib\n',
+                encoding='utf-8')
+            build = subprocess.run(['cmd', '/d', '/c', str(temporary / 'build.cmd')], cwd=temporary, capture_output=True)
+            self.assertEqual(build.returncode, 0, build.stdout.decode(errors='replace') + build.stderr.decode(errors='replace'))
+            result = subprocess.run([str(temporary / 'native_ui_lifetime.exe')], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout.decode(errors='replace') + result.stderr.decode(errors='replace'))
 
     def test_rejected_battle_preserves_accepted_geometry_and_identity(self):
         if not vcvarsall().is_file():
@@ -6069,7 +6206,7 @@ int main() {
             'void __stdcall ApplyProjectionOutline(', 1)[0]
         implementation += 'bool __fastcall ProjectionDetailsCanRotate(' + source.split('bool __fastcall ProjectionDetailsCanRotate(', 1)[1].split(
             'int HoveredProjectionSlot() {', 1)[0]
-        implementation += 'void ObserveProjectionWindowInput(' + source.split('void ObserveProjectionWindowInput(', 1)[1].split(
+        implementation += 'bool ObserveProjectionWindowInput(' + source.split('bool ObserveProjectionWindowInput(', 1)[1].split(
             'BOOL CALLBACK FindProjectionWindow(', 1)[0]
         implementation = 'void ProcessProjectionDetails(bool installRotatorCallbacks = true);\nvoid ReleaseProjectionDetailsRotator();\n' + implementation
         setup = vcvarsall()
@@ -6259,6 +6396,22 @@ int main() {
     screen[0x2a8/4]=111;screen[0xf4/4]=333;g_projectionScreen=screen;
     *reinterpret_cast<uint32_t*>(output+496)=2;g_tooltipChoice[0]=1;
     const LPARAM point=MAKELPARAM(120,230);
+    // Rapid second RMB is a DBLCLK, and must select the next public grade.
+    g_tooltipController=reinterpret_cast<uint32_t*>(controller);
+    g_tooltipClickSlot=0;provider[3]=ProjectionTooltipDescriptor(58);
+    const unsigned clicksBeforeRapid=nativeClicks;
+    CHECK(ObserveProjectionWindowInput(WM_RBUTTONDBLCLK,point));
+    CHECK(g_tooltipChoice[0]==1 && nativeClicks==clicksBeforeRapid);
+    // The adapter schedules the stock down event after native DBLCLK handling.
+    ProjectionProviderRightClick(provider,nullptr);
+    CHECK(g_tooltipChoice[0]==2 && provider[3]==DescriptorAddress(59));
+    CHECK(provider[4]==1 && nativeClicks==clicksBeforeRapid+1);
+    CHECK(range()>upgradeRange);
+    blockDetails=true;CHECK(!ObserveProjectionWindowInput(WM_RBUTTONDBLCLK,point));
+    CHECK(g_tooltipChoice[0]==2 && !g_detailsHitTest);blockDetails=false;
+    detailsScreenActive=false;CHECK(!ObserveProjectionWindowInput(WM_RBUTTONDBLCLK,point));
+    CHECK(g_tooltipChoice[0]==2);detailsScreenActive=true;
+    g_tooltipChoice[0]=1;
     CHECK(ProjectionWindowProc(nullptr,WM_LBUTTONDOWN,0,point)==73 && g_detailsSlot==-1);
     detailsScreenActive=false;
     CHECK(ProjectionWindowProc(nullptr,WM_LBUTTONDBLCLK,0,point)==73 && g_detailsSlot==-1);

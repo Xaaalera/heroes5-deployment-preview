@@ -2552,6 +2552,36 @@ def verify_managed_artifacts(report, path):
             expected = manifest[key]
             if hashlib.sha256(archive.read(member)).hexdigest() != expected or sha256(root / '.local/test-game' / member) != expected:
                 raise RuntimeError('Managed archived and installed player files differ: ' + member)
+        metadata = json.loads((MOD / 'xalkit.json').read_text(encoding='utf-8'))
+        expected_resources = set()
+        if 'resource_project' in metadata:
+            relative = metadata['resource_project']
+            if not isinstance(relative, str) or not relative or Path(relative).is_absolute() or Path(relative).drive or '..' in Path(relative).parts:
+                raise RuntimeError('Managed native resource project path is invalid')
+            resource_project = (MOD / relative).resolve(strict=True)
+            if not resource_project.is_relative_to(MOD.resolve()):
+                raise RuntimeError('Managed native resource project escapes the mod')
+            identifier = json.loads((resource_project / 'mod.json').read_text(encoding='utf-8')).get('id')
+            if not isinstance(identifier, str) or not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', identifier):
+                raise RuntimeError('Managed native resource recipe ID is invalid')
+            expected_resources.add('UserMODs/workshop-' + identifier + '.h5u')
+        resources = manifest.get('resources', {})
+        if not isinstance(resources, dict) or set(resources) != expected_resources:
+            raise RuntimeError('Managed resource dependencies differ from the native project declaration')
+        from plugin_core import validate_resource_archive, resource_source_snapshot
+        if resources and manifest.get('resource_source_hashes') != resource_source_snapshot(resource_project):
+            raise RuntimeError('Managed resource sources changed after player packaging')
+        for member, expected in resources.items():
+            installed = root / '.local/test-game' / member
+            if member not in archive.namelist():
+                raise RuntimeError('Managed resource dependency is absent from the player archive: ' + member)
+            content = archive.read(member)
+            if not installed.is_file() or hashlib.sha256(content).hexdigest() != expected or sha256(installed) != expected:
+                raise RuntimeError('Managed archived and installed resource files differ: ' + member)
+            try:
+                validate_resource_archive(content)
+            except ValueError as failure:
+                raise RuntimeError('Managed resource archive is invalid: ' + member) from failure
     if report.get('active_payload_sha256') != manifest['plugin_sha256']:
         raise RuntimeError('Managed evidence is not from the final archived player DLL')
     if sha256(root / '.local/test-game/bin/d3d9.universe.dll') != manifest['graphics_original_sha256']:

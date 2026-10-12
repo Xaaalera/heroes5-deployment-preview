@@ -1,0 +1,1398 @@
+{
+  "id": "deployment-preview-ui",
+  "source_archive": "Universe_mod.pak",
+  "source_path": "UI/CombatScreen-Heavy.(WindowScreenShared).xdb",
+  "encode_texts": "utf-16-le",
+  "xml_patches": [
+    {
+      "source": "UI/CombatScreen-Heavy.(WindowScreenShared).xdb",
+      "append_xml": {
+        "Children": [
+          "<Item href=\"/UI/DeploymentPreview/Launcher.xdb#xpointer(/WindowMSButton)\"/>",
+          "<Item href=\"/UI/DeploymentPreview/Overlay.xdb#xpointer(/WindowSimple)\"/>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/Box0p/ButtonOk.(WindowMSButton).xdb",
+      "target": "UI/DeploymentPreview/Launcher.xdb",
+      "clear": [
+        "GameMessageReactions",
+        "ButtonStates"
+      ],
+      "text": {
+        "Name": "DeploymentBreakdownButton",
+        "Visible": "false",
+        "Enabled": "true",
+        "Priority": "8",
+        "AutoChangeState": "true",
+        "State": "0",
+        "Placement/Position/First/x": "320",
+        "Placement/Position/First/y": "-179",
+        "Placement/Position/Second": "true",
+        "Placement/VerAllign/First": "EPA_HIGH_END",
+        "Placement/VerAllign/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/Size/First/x": "136",
+        "Placement/Size/First/y": "49",
+        "Placement/Size/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/LauncherShared.xdb#xpointer(/WindowMSButtonShared)"
+        },
+        "TooltipFileRef": {
+          "href": "/UI/DeploymentPreview/LauncherTooltip.txt"
+        }
+      },
+      "append_xml": {
+        "ButtonStates": [
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Idle</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Activate</Name></Item>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Tavern/Button.(WindowMSButtonShared).xdb",
+      "target": "UI/DeploymentPreview/LauncherShared.xdb",
+      "clear": [
+        "Children",
+        "VisualStates"
+      ],
+      "append_xml": {
+        "VisualStates": [
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonNormal.(BackGroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/LauncherText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonPushed.(BackgroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/LauncherText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonDisabled.(BackgroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/LauncherText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>\n\t",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonNormal.(BackGroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/LauncherText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonPushed.(BackgroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/LauncherText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonDisabled.(BackgroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/LauncherText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>\n\t"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Tavern/HireButton.(ForegroundTextString).xdb",
+      "target": "UI/DeploymentPreview/LauncherText.xdb",
+      "attributes": {
+        "TextStringFileRef": {
+          "href": "/UI/DeploymentPreview/Launcher.txt"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CombatArena/StackInfo/StackText.(WindowTextViewShared).xdb",
+      "target": "UI/DeploymentPreview/TextShared.xdb",
+      "text": {
+        "Flags/Transparent": "true"
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/AdventureScreen-heavy/HotSeatBlackBg.(WindowSimple).xdb",
+      "target": "UI/DeploymentPreview/Overlay.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentOverlay",
+        "Visible": "false",
+        "Priority": "2000000",
+        "Placement/Position/First/x": "0",
+        "Placement/Position/First/y": "0",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "0",
+        "Placement/Size/First/y": "0",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_MARGIN",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_MARGIN",
+        "Placement/VerAllign/Second": "true",
+        "Flags/SuperActive": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/OverlayShared.xdb#xpointer(/WindowSimpleShared)"
+        },
+        "TooltipFileRef": {
+          "href": ""
+        }
+      },
+      "append_xml": {
+        "GameMessageReactions": [
+          "<Item><GameMessage>esc_pressed</GameMessage><LogicalReaction/><VisualReaction><Commands><Item href=\"/UI/DeploymentPreview/CloseOverlay.xdb#xpointer(/UISSendUIMessage)\"/></Commands><Reversable>false</Reversable></VisualReaction><WaitVisual>true</WaitVisual><Forward>true</Forward></Item>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/Face.(WindowSimpleShared).xdb",
+      "target": "UI/DeploymentPreview/OverlayShared.xdb",
+      "clear": [
+        "Children"
+      ],
+      "text": {
+        "Flags/Transparent": "false"
+      },
+      "attributes": {
+        "Background": {
+          "href": "/UI/DeploymentPreview/Shade.xdb#xpointer(/BackgroundTiledTexture)"
+        },
+        "Foreground": {
+          "href": ""
+        }
+      },
+      "append_xml": {
+        "Children": [
+          "<Item href=\"/UI/DeploymentPreview/Panel.xdb#xpointer(/WindowSimple)\"/>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/AdventureScreen-heavy/HotSeatBlackBg.(WindowSimple).xdb",
+      "target": "UI/DeploymentPreview/Panel.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentPanel",
+        "Visible": "true",
+        "Priority": "1",
+        "Placement/Position/First/x": "0",
+        "Placement/Position/First/y": "0",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "1100",
+        "Placement/Size/First/y": "700",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "ERA_CENTER",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "ERA_CENTER",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/PanelShared.xdb#xpointer(/WindowSimpleShared)"
+        },
+        "TooltipFileRef": {
+          "href": ""
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/Face.(WindowSimpleShared).xdb",
+      "target": "UI/DeploymentPreview/PanelShared.xdb",
+      "clear": [
+        "Children"
+      ],
+      "text": {
+        "Flags/Transparent": "false"
+      },
+      "attributes": {
+        "Background": {
+          "href": "/UI/ExitMenu/Back.(BackgroundTiledTexture).xdb#xpointer(/BackgroundTiledTexture)"
+        },
+        "Foreground": {
+          "href": ""
+        }
+      },
+      "append_xml": {
+        "Children": [
+          "<Item href=\"/UI/DeploymentPreview/Title.xdb#xpointer(/WindowTextView)\"/>",
+          "<Item href=\"/UI/DeploymentPreview/Status.xdb#xpointer(/WindowTextView)\"/>",
+          "<Item href=\"/UI/DeploymentPreview/ForecastTitle.xdb#xpointer(/WindowTextView)\"/>",
+          "<Item href=\"/UI/DeploymentPreview/ActualTitle.xdb#xpointer(/WindowTextView)\"/>",
+          "<Item href=\"/UI/DeploymentPreview/ForecastGrid.xdb#xpointer(/WindowSimple)\"/>",
+          "<Item href=\"/UI/DeploymentPreview/ActualGrid.xdb#xpointer(/WindowSimple)\"/>",
+          "<Item href=\"/UI/DeploymentPreview/DetailsScroll.xdb#xpointer(/WindowScrollableContainer)\"/>",
+          "<Item href=\"/UI/DeploymentPreview/Close.xdb#xpointer(/WindowMSButton)\"/>",
+          "<Item href=\"/UI/DeploymentPreview/CellTemplate.xdb#xpointer(/WindowMSButton)\"/>",
+          "<Item href=\"/UI/DeploymentPreview/RowTemplate.xdb#xpointer(/WindowSimple)\"/>",
+          "<Item href=\"/UI/DeploymentPreview/RosterTemplate.xdb#xpointer(/WindowMSButton)\"/>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CombatArena/StackInfo/StackText.(WindowTextView).xdb",
+      "target": "UI/DeploymentPreview/Title.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentTitle",
+        "Visible": "true",
+        "Priority": "2",
+        "ResizeOnTextSet": "false",
+        "ResizeWidthOnTextSet": "false",
+        "Placement/Position/First/x": "35",
+        "Placement/Position/First/y": "20",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "1030",
+        "Placement/Size/First/y": "32",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/TextShared.xdb#xpointer(/WindowTextViewShared)"
+        },
+        "TextFileRef": {
+          "href": "/UI/DeploymentPreview/PanelTitle.txt"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CombatArena/StackInfo/StackText.(WindowTextView).xdb",
+      "target": "UI/DeploymentPreview/Status.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentStatus",
+        "Visible": "true",
+        "Priority": "2",
+        "ResizeOnTextSet": "false",
+        "ResizeWidthOnTextSet": "false",
+        "Placement/Position/First/x": "35",
+        "Placement/Position/First/y": "56",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "1030",
+        "Placement/Size/First/y": "36",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/TextShared.xdb#xpointer(/WindowTextViewShared)"
+        },
+        "TextFileRef": {
+          "href": "/UI/DeploymentPreview/Empty.txt"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CombatArena/StackInfo/StackText.(WindowTextView).xdb",
+      "target": "UI/DeploymentPreview/ForecastTitle.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentForecastTitle",
+        "Visible": "true",
+        "Priority": "2",
+        "ResizeOnTextSet": "false",
+        "ResizeWidthOnTextSet": "false",
+        "Placement/Position/First/x": "35",
+        "Placement/Position/First/y": "94",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "360",
+        "Placement/Size/First/y": "28",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/TextShared.xdb#xpointer(/WindowTextViewShared)"
+        },
+        "TextFileRef": {
+          "href": "/UI/DeploymentPreview/ForecastTitle.txt"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CombatArena/StackInfo/StackText.(WindowTextView).xdb",
+      "target": "UI/DeploymentPreview/ActualTitle.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentActualTitle",
+        "Visible": "true",
+        "Priority": "2",
+        "ResizeOnTextSet": "false",
+        "ResizeWidthOnTextSet": "false",
+        "Placement/Position/First/x": "430",
+        "Placement/Position/First/y": "94",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "360",
+        "Placement/Size/First/y": "28",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/TextShared.xdb#xpointer(/WindowTextViewShared)"
+        },
+        "TextFileRef": {
+          "href": "/UI/DeploymentPreview/ActualTitle.txt"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/Face.(WindowSimpleShared).xdb",
+      "target": "UI/DeploymentPreview/GridShared.xdb",
+      "clear": [
+        "Children"
+      ],
+      "text": {
+        "Flags/Transparent": "false"
+      },
+      "attributes": {
+        "Background": {
+          "href": ""
+        },
+        "Foreground": {
+          "href": ""
+        }
+      },
+      "append_xml": {
+        "Children": []
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/AdventureScreen-heavy/HotSeatBlackBg.(WindowSimple).xdb",
+      "target": "UI/DeploymentPreview/ForecastGrid.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentForecastGrid",
+        "Visible": "true",
+        "Priority": "1",
+        "Placement/Position/First/x": "35",
+        "Placement/Position/First/y": "126",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "370",
+        "Placement/Size/First/y": "300",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/GridShared.xdb#xpointer(/WindowSimpleShared)"
+        },
+        "TooltipFileRef": {
+          "href": ""
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/AdventureScreen-heavy/HotSeatBlackBg.(WindowSimple).xdb",
+      "target": "UI/DeploymentPreview/ActualGrid.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentActualGrid",
+        "Visible": "true",
+        "Priority": "1",
+        "Placement/Position/First/x": "430",
+        "Placement/Position/First/y": "126",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "370",
+        "Placement/Size/First/y": "300",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/GridShared.xdb#xpointer(/WindowSimpleShared)"
+        },
+        "TooltipFileRef": {
+          "href": ""
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CombatArena/StackInfo/StackText.(WindowTextView).xdb",
+      "target": "UI/DeploymentPreview/Details.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentDetails",
+        "Visible": "true",
+        "Priority": "2",
+        "ResizeOnTextSet": "true",
+        "ResizeWidthOnTextSet": "false",
+        "Placement/Position/First/x": "0",
+        "Placement/Position/First/y": "0",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "735",
+        "Placement/Size/First/y": "180",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/TextShared.xdb#xpointer(/WindowTextViewShared)"
+        },
+        "TextFileRef": {
+          "href": "/UI/DeploymentPreview/Empty.txt"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/Face.(WindowSimpleShared).xdb",
+      "target": "UI/DeploymentPreview/RowShared.xdb",
+      "clear": [
+        "Children"
+      ],
+      "text": {
+        "Flags/Transparent": "false"
+      },
+      "attributes": {
+        "Background": {
+          "href": ""
+        },
+        "Foreground": {
+          "href": ""
+        }
+      },
+      "append_xml": {
+        "Children": [
+          "<Item href=\"/UI/DeploymentPreview/RowNumber.xdb#xpointer(/WindowTextView)\"/>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/AdventureScreen-heavy/HotSeatBlackBg.(WindowSimple).xdb",
+      "target": "UI/DeploymentPreview/RowTemplate.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentRowTemplate",
+        "Visible": "false",
+        "Priority": "1",
+        "Placement/Position/First/x": "0",
+        "Placement/Position/First/y": "0",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "370",
+        "Placement/Size/First/y": "26",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/RowShared.xdb#xpointer(/WindowSimpleShared)"
+        },
+        "TooltipFileRef": {
+          "href": ""
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CombatArena/StackInfo/StackText.(WindowTextView).xdb",
+      "target": "UI/DeploymentPreview/RowNumber.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentRowNumber",
+        "Visible": "true",
+        "Priority": "2",
+        "ResizeOnTextSet": "false",
+        "ResizeWidthOnTextSet": "false",
+        "Placement/Position/First/x": "340",
+        "Placement/Position/First/y": "0",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "30",
+        "Placement/Size/First/y": "26",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/TextShared.xdb#xpointer(/WindowTextViewShared)"
+        },
+        "TextFileRef": {
+          "href": "/UI/DeploymentPreview/Empty.txt"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CombatArena/StackInfo/StackText.(WindowTextView).xdb",
+      "target": "UI/DeploymentPreview/CellText.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentCellText",
+        "Visible": "true",
+        "Priority": "2",
+        "ResizeOnTextSet": "false",
+        "ResizeWidthOnTextSet": "false",
+        "Placement/Position/First/x": "0",
+        "Placement/Position/First/y": "0",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "26",
+        "Placement/Size/First/y": "26",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/TextShared.xdb#xpointer(/WindowTextViewShared)"
+        },
+        "TextFileRef": {
+          "href": "/UI/DeploymentPreview/Empty.txt"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Tavern/Button.(WindowMSButtonShared).xdb",
+      "target": "UI/DeploymentPreview/CellShared.xdb",
+      "clear": [
+        "Children",
+        "VisualStates"
+      ],
+      "text": {
+        "Placement/Size/First/x": "26",
+        "Placement/Size/First/y": "26"
+      },
+      "append_xml": {
+        "Children": [
+          "<Item href=\"/UI/DeploymentPreview/CellText.xdb#xpointer(/WindowTextView)\"/>"
+        ],
+        "VisualStates": [
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ObstacleCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ObstacleCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ObstacleCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ObstacleCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ObstacleCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ObstacleCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ObstacleCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ObstacleCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ForecastCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ForecastCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ForecastCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ForecastCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ForecastCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ForecastCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ForecastCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ForecastCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ActualCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ActualCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ActualCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ActualCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ActualCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ActualCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ActualCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/ActualCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/OwnCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/OwnCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/OwnCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/OwnCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/OwnCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/OwnCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/OwnCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/OwnCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/SelectedCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/SelectedCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/SelectedCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/SelectedCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/SelectedCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/SelectedCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/SelectedCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/SelectedCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/Box0p/ButtonOk.(WindowMSButton).xdb",
+      "target": "UI/DeploymentPreview/CellTemplate.xdb",
+      "clear": [
+        "GameMessageReactions",
+        "ButtonStates"
+      ],
+      "text": {
+        "Name": "DeploymentCellTemplate",
+        "Visible": "false",
+        "Enabled": "true",
+        "Priority": "3",
+        "AutoChangeState": "true",
+        "State": "0",
+        "Placement/Position/First/x": "0",
+        "Placement/Position/First/y": "0",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "26",
+        "Placement/Size/First/y": "26",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/CellShared.xdb#xpointer(/WindowMSButtonShared)"
+        },
+        "TooltipFileRef": {
+          "href": ""
+        }
+      },
+      "append_xml": {
+        "ButtonStates": [
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Idle</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Activate</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Idle</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Activate</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Idle</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Activate</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Idle</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Activate</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Idle</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Activate</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Idle</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Activate</Name></Item>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/Box0p/ButtonOk.(WindowMSButton).xdb",
+      "target": "UI/DeploymentPreview/RosterTemplate.xdb",
+      "clear": [
+        "GameMessageReactions",
+        "ButtonStates"
+      ],
+      "text": {
+        "Name": "DeploymentRosterTemplate",
+        "Visible": "false",
+        "Enabled": "true",
+        "Priority": "3",
+        "AutoChangeState": "true",
+        "State": "0",
+        "Placement/Position/First/x": "810",
+        "Placement/Position/First/y": "126",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "255",
+        "Placement/Size/First/y": "24",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/RosterShared.xdb#xpointer(/WindowMSButtonShared)"
+        },
+        "TooltipFileRef": {
+          "href": ""
+        }
+      },
+      "append_xml": {
+        "ButtonStates": [
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Idle</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Activate</Name></Item>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/Box0p/ButtonOk.(WindowMSButton).xdb",
+      "target": "UI/DeploymentPreview/Close.xdb",
+      "clear": [
+        "GameMessageReactions",
+        "ButtonStates"
+      ],
+      "text": {
+        "Name": "DeploymentClose",
+        "Visible": "true",
+        "Enabled": "true",
+        "Priority": "3",
+        "AutoChangeState": "true",
+        "State": "0",
+        "Placement/Position/First/x": "482",
+        "Placement/Position/First/y": "628",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "136",
+        "Placement/Size/First/y": "49",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/CloseShared.xdb#xpointer(/WindowMSButtonShared)"
+        },
+        "TooltipFileRef": {
+          "href": ""
+        }
+      },
+      "append_xml": {
+        "ButtonStates": [
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Idle</Name></Item>",
+          "<Item><MessageOnEnterState/><CommandsOnEnterState><Commands/><Reversable>false</Reversable></CommandsOnEnterState><CommandsOnRightClick><Commands/><Reversable>false</Reversable></CommandsOnRightClick><commandsOnLDblKlick><Commands/><Reversable>false</Reversable></commandsOnLDblKlick><WaitVisual>false</WaitVisual><ReverseCommands>false</ReverseCommands><Name>Activate</Name></Item>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CombatArena/StackInfo/StackText.(WindowTextView).xdb",
+      "target": "UI/DeploymentPreview/RosterText.xdb",
+      "clear": [
+        "GameMessageReactions"
+      ],
+      "text": {
+        "Name": "DeploymentRosterText",
+        "Visible": "true",
+        "Priority": "2",
+        "ResizeOnTextSet": "false",
+        "ResizeWidthOnTextSet": "false",
+        "Placement/Position/First/x": "3",
+        "Placement/Position/First/y": "0",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "249",
+        "Placement/Size/First/y": "24",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/TextShared.xdb#xpointer(/WindowTextViewShared)"
+        },
+        "TextFileRef": {
+          "href": "/UI/DeploymentPreview/Empty.txt"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Tavern/Button.(WindowMSButtonShared).xdb",
+      "target": "UI/DeploymentPreview/RosterShared.xdb",
+      "clear": [
+        "Children",
+        "VisualStates"
+      ],
+      "text": {
+        "Placement/Size/First/x": "255",
+        "Placement/Size/First/y": "24"
+      },
+      "append_xml": {
+        "Children": [
+          "<Item href=\"/UI/DeploymentPreview/RosterText.xdb#xpointer(/WindowTextView)\"/>"
+        ],
+        "VisualStates": [
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/DeploymentPreview/EmptyCell.xdb#xpointer(/BackgroundTiledTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Tavern/Button.(WindowMSButtonShared).xdb",
+      "target": "UI/DeploymentPreview/CloseShared.xdb",
+      "clear": [
+        "Children",
+        "VisualStates"
+      ],
+      "append_xml": {
+        "VisualStates": [
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonNormal.(BackGroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/CloseText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonPushed.(BackgroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/CloseText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonDisabled.(BackgroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/CloseText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>",
+          "<Item>\n\t\t\t<Normal>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonNormal.(BackGroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/CloseText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Normal>\n\t\t\t<MouseOver>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</MouseOver>\n\t\t\t<Pushed>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonPushed.(BackgroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/CloseText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Pushed>\n\t\t\t<Disabled>\n\t\t\t\t<Background href=\"/UI/Tavern/ButtonDisabled.(BackgroundSimpleTexture).xdb#xpointer(/BackgroundSimpleTexture)\" />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString href=\"/UI/DeploymentPreview/CloseText.xdb#xpointer(/ForegroundTextString)\" />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</Disabled>\n\t\t\t<RightButtonDown>\n\t\t\t\t<Background />\n\t\t\t\t<Foreground />\n\t\t\t\t<TextString />\n\t\t\t\t<OnEnterSubState>\n\t\t\t\t\t<Commands />\n\t\t\t\t\t<Reversable>false</Reversable>\n\t\t\t\t</OnEnterSubState>\n\t\t\t\t<TextFormat />\n\t\t\t</RightButtonDown>\n\t\t\t<DefaultSubState>BST_NORMAL</DefaultSubState>\n\t\t\t<VisualOnEnterState>\n\t\t\t\t<Commands />\n\t\t\t\t<Reversable>false</Reversable>\n\t\t\t</VisualOnEnterState>\n\t\t</Item>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Tavern/HireButton.(ForegroundTextString).xdb",
+      "target": "UI/DeploymentPreview/CloseText.xdb",
+      "attributes": {
+        "TextStringFileRef": {
+          "href": "/UI/DeploymentPreview/Close.txt"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Misc/Back.(BackgroundTiledTexture).xdb",
+      "target": "UI/DeploymentPreview/Shade.xdb",
+      "text": {
+        "Color": "-1342177280",
+        "rLT/Size/x": "1",
+        "rLT/Size/y": "1",
+        "rLT/Maps/x1": "0",
+        "rLT/Maps/y1": "0",
+        "rLT/Maps/x2": "1",
+        "rLT/Maps/y2": "1",
+        "rRT/Size/x": "1",
+        "rRT/Size/y": "1",
+        "rRT/Maps/x1": "2",
+        "rRT/Maps/y1": "0",
+        "rRT/Maps/x2": "3",
+        "rRT/Maps/y2": "1",
+        "rLB/Size/x": "1",
+        "rLB/Size/y": "1",
+        "rLB/Maps/x1": "0",
+        "rLB/Maps/y1": "2",
+        "rLB/Maps/x2": "1",
+        "rLB/Maps/y2": "3",
+        "rRB/Size/x": "1",
+        "rRB/Size/y": "1",
+        "rRB/Maps/x1": "2",
+        "rRB/Maps/y1": "2",
+        "rRB/Maps/x2": "3",
+        "rRB/Maps/y2": "3",
+        "rT/Size/x": "4096",
+        "rT/Size/y": "1",
+        "rT/Maps/x1": "1",
+        "rT/Maps/y1": "0",
+        "rT/Maps/x2": "2",
+        "rT/Maps/y2": "1",
+        "rL/Size/x": "1",
+        "rL/Size/y": "4096",
+        "rL/Maps/x1": "0",
+        "rL/Maps/y1": "1",
+        "rL/Maps/x2": "1",
+        "rL/Maps/y2": "2",
+        "rR/Size/x": "1",
+        "rR/Size/y": "4096",
+        "rR/Maps/x1": "2",
+        "rR/Maps/y1": "1",
+        "rR/Maps/x2": "3",
+        "rR/Maps/y2": "2",
+        "rB/Size/x": "4096",
+        "rB/Size/y": "1",
+        "rB/Maps/x1": "1",
+        "rB/Maps/y1": "2",
+        "rB/Maps/x2": "2",
+        "rB/Maps/y2": "3",
+        "rF/Size/x": "4096",
+        "rF/Size/y": "4096",
+        "rF/Maps/x1": "1",
+        "rF/Maps/y1": "1",
+        "rF/Maps/x2": "2",
+        "rF/Maps/y2": "2"
+      },
+      "attributes": {
+        "Texture": {
+          "href": "/UI/DeploymentPreview/CellTexture.xdb#xpointer(/Texture)"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Misc/Back.(BackgroundTiledTexture).xdb",
+      "target": "UI/DeploymentPreview/EmptyCell.xdb",
+      "text": {
+        "Color": "-14138825",
+        "rLT/Size/x": "1",
+        "rLT/Size/y": "1",
+        "rLT/Maps/x1": "0",
+        "rLT/Maps/y1": "0",
+        "rLT/Maps/x2": "1",
+        "rLT/Maps/y2": "1",
+        "rRT/Size/x": "1",
+        "rRT/Size/y": "1",
+        "rRT/Maps/x1": "2",
+        "rRT/Maps/y1": "0",
+        "rRT/Maps/x2": "3",
+        "rRT/Maps/y2": "1",
+        "rLB/Size/x": "1",
+        "rLB/Size/y": "1",
+        "rLB/Maps/x1": "0",
+        "rLB/Maps/y1": "2",
+        "rLB/Maps/x2": "1",
+        "rLB/Maps/y2": "3",
+        "rRB/Size/x": "1",
+        "rRB/Size/y": "1",
+        "rRB/Maps/x1": "2",
+        "rRB/Maps/y1": "2",
+        "rRB/Maps/x2": "3",
+        "rRB/Maps/y2": "3",
+        "rT/Size/x": "4096",
+        "rT/Size/y": "1",
+        "rT/Maps/x1": "1",
+        "rT/Maps/y1": "0",
+        "rT/Maps/x2": "2",
+        "rT/Maps/y2": "1",
+        "rL/Size/x": "1",
+        "rL/Size/y": "4096",
+        "rL/Maps/x1": "0",
+        "rL/Maps/y1": "1",
+        "rL/Maps/x2": "1",
+        "rL/Maps/y2": "2",
+        "rR/Size/x": "1",
+        "rR/Size/y": "4096",
+        "rR/Maps/x1": "2",
+        "rR/Maps/y1": "1",
+        "rR/Maps/x2": "3",
+        "rR/Maps/y2": "2",
+        "rB/Size/x": "4096",
+        "rB/Size/y": "1",
+        "rB/Maps/x1": "1",
+        "rB/Maps/y1": "2",
+        "rB/Maps/x2": "2",
+        "rB/Maps/y2": "3",
+        "rF/Size/x": "4096",
+        "rF/Size/y": "4096",
+        "rF/Maps/x1": "1",
+        "rF/Maps/y1": "1",
+        "rF/Maps/x2": "2",
+        "rF/Maps/y2": "2"
+      },
+      "attributes": {
+        "Texture": {
+          "href": "/UI/DeploymentPreview/CellTexture.xdb#xpointer(/Texture)"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Misc/Back.(BackgroundTiledTexture).xdb",
+      "target": "UI/DeploymentPreview/ObstacleCell.xdb",
+      "text": {
+        "Color": "-11248816",
+        "rLT/Size/x": "1",
+        "rLT/Size/y": "1",
+        "rLT/Maps/x1": "0",
+        "rLT/Maps/y1": "0",
+        "rLT/Maps/x2": "1",
+        "rLT/Maps/y2": "1",
+        "rRT/Size/x": "1",
+        "rRT/Size/y": "1",
+        "rRT/Maps/x1": "2",
+        "rRT/Maps/y1": "0",
+        "rRT/Maps/x2": "3",
+        "rRT/Maps/y2": "1",
+        "rLB/Size/x": "1",
+        "rLB/Size/y": "1",
+        "rLB/Maps/x1": "0",
+        "rLB/Maps/y1": "2",
+        "rLB/Maps/x2": "1",
+        "rLB/Maps/y2": "3",
+        "rRB/Size/x": "1",
+        "rRB/Size/y": "1",
+        "rRB/Maps/x1": "2",
+        "rRB/Maps/y1": "2",
+        "rRB/Maps/x2": "3",
+        "rRB/Maps/y2": "3",
+        "rT/Size/x": "4096",
+        "rT/Size/y": "1",
+        "rT/Maps/x1": "1",
+        "rT/Maps/y1": "0",
+        "rT/Maps/x2": "2",
+        "rT/Maps/y2": "1",
+        "rL/Size/x": "1",
+        "rL/Size/y": "4096",
+        "rL/Maps/x1": "0",
+        "rL/Maps/y1": "1",
+        "rL/Maps/x2": "1",
+        "rL/Maps/y2": "2",
+        "rR/Size/x": "1",
+        "rR/Size/y": "4096",
+        "rR/Maps/x1": "2",
+        "rR/Maps/y1": "1",
+        "rR/Maps/x2": "3",
+        "rR/Maps/y2": "2",
+        "rB/Size/x": "4096",
+        "rB/Size/y": "1",
+        "rB/Maps/x1": "1",
+        "rB/Maps/y1": "2",
+        "rB/Maps/x2": "2",
+        "rB/Maps/y2": "3",
+        "rF/Size/x": "4096",
+        "rF/Size/y": "4096",
+        "rF/Maps/x1": "1",
+        "rF/Maps/y1": "1",
+        "rF/Maps/x2": "2",
+        "rF/Maps/y2": "2"
+      },
+      "attributes": {
+        "Texture": {
+          "href": "/UI/DeploymentPreview/CellTexture.xdb#xpointer(/Texture)"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Misc/Back.(BackgroundTiledTexture).xdb",
+      "target": "UI/DeploymentPreview/ForecastCell.xdb",
+      "text": {
+        "Color": "-13012585",
+        "rLT/Size/x": "1",
+        "rLT/Size/y": "1",
+        "rLT/Maps/x1": "0",
+        "rLT/Maps/y1": "0",
+        "rLT/Maps/x2": "1",
+        "rLT/Maps/y2": "1",
+        "rRT/Size/x": "1",
+        "rRT/Size/y": "1",
+        "rRT/Maps/x1": "2",
+        "rRT/Maps/y1": "0",
+        "rRT/Maps/x2": "3",
+        "rRT/Maps/y2": "1",
+        "rLB/Size/x": "1",
+        "rLB/Size/y": "1",
+        "rLB/Maps/x1": "0",
+        "rLB/Maps/y1": "2",
+        "rLB/Maps/x2": "1",
+        "rLB/Maps/y2": "3",
+        "rRB/Size/x": "1",
+        "rRB/Size/y": "1",
+        "rRB/Maps/x1": "2",
+        "rRB/Maps/y1": "2",
+        "rRB/Maps/x2": "3",
+        "rRB/Maps/y2": "3",
+        "rT/Size/x": "4096",
+        "rT/Size/y": "1",
+        "rT/Maps/x1": "1",
+        "rT/Maps/y1": "0",
+        "rT/Maps/x2": "2",
+        "rT/Maps/y2": "1",
+        "rL/Size/x": "1",
+        "rL/Size/y": "4096",
+        "rL/Maps/x1": "0",
+        "rL/Maps/y1": "1",
+        "rL/Maps/x2": "1",
+        "rL/Maps/y2": "2",
+        "rR/Size/x": "1",
+        "rR/Size/y": "4096",
+        "rR/Maps/x1": "2",
+        "rR/Maps/y1": "1",
+        "rR/Maps/x2": "3",
+        "rR/Maps/y2": "2",
+        "rB/Size/x": "4096",
+        "rB/Size/y": "1",
+        "rB/Maps/x1": "1",
+        "rB/Maps/y1": "2",
+        "rB/Maps/x2": "2",
+        "rB/Maps/y2": "3",
+        "rF/Size/x": "4096",
+        "rF/Size/y": "4096",
+        "rF/Maps/x1": "1",
+        "rF/Maps/y1": "1",
+        "rF/Maps/x2": "2",
+        "rF/Maps/y2": "2"
+      },
+      "attributes": {
+        "Texture": {
+          "href": "/UI/DeploymentPreview/CellTexture.xdb#xpointer(/Texture)"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Misc/Back.(BackgroundTiledTexture).xdb",
+      "target": "UI/DeploymentPreview/ActualCell.xdb",
+      "text": {
+        "Color": "-6000324",
+        "rLT/Size/x": "1",
+        "rLT/Size/y": "1",
+        "rLT/Maps/x1": "0",
+        "rLT/Maps/y1": "0",
+        "rLT/Maps/x2": "1",
+        "rLT/Maps/y2": "1",
+        "rRT/Size/x": "1",
+        "rRT/Size/y": "1",
+        "rRT/Maps/x1": "2",
+        "rRT/Maps/y1": "0",
+        "rRT/Maps/x2": "3",
+        "rRT/Maps/y2": "1",
+        "rLB/Size/x": "1",
+        "rLB/Size/y": "1",
+        "rLB/Maps/x1": "0",
+        "rLB/Maps/y1": "2",
+        "rLB/Maps/x2": "1",
+        "rLB/Maps/y2": "3",
+        "rRB/Size/x": "1",
+        "rRB/Size/y": "1",
+        "rRB/Maps/x1": "2",
+        "rRB/Maps/y1": "2",
+        "rRB/Maps/x2": "3",
+        "rRB/Maps/y2": "3",
+        "rT/Size/x": "4096",
+        "rT/Size/y": "1",
+        "rT/Maps/x1": "1",
+        "rT/Maps/y1": "0",
+        "rT/Maps/x2": "2",
+        "rT/Maps/y2": "1",
+        "rL/Size/x": "1",
+        "rL/Size/y": "4096",
+        "rL/Maps/x1": "0",
+        "rL/Maps/y1": "1",
+        "rL/Maps/x2": "1",
+        "rL/Maps/y2": "2",
+        "rR/Size/x": "1",
+        "rR/Size/y": "4096",
+        "rR/Maps/x1": "2",
+        "rR/Maps/y1": "1",
+        "rR/Maps/x2": "3",
+        "rR/Maps/y2": "2",
+        "rB/Size/x": "4096",
+        "rB/Size/y": "1",
+        "rB/Maps/x1": "1",
+        "rB/Maps/y1": "2",
+        "rB/Maps/x2": "2",
+        "rB/Maps/y2": "3",
+        "rF/Size/x": "4096",
+        "rF/Size/y": "4096",
+        "rF/Maps/x1": "1",
+        "rF/Maps/y1": "1",
+        "rF/Maps/x2": "2",
+        "rF/Maps/y2": "2"
+      },
+      "attributes": {
+        "Texture": {
+          "href": "/UI/DeploymentPreview/CellTexture.xdb#xpointer(/Texture)"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Misc/Back.(BackgroundTiledTexture).xdb",
+      "target": "UI/DeploymentPreview/OwnCell.xdb",
+      "text": {
+        "Color": "-11830200",
+        "rLT/Size/x": "1",
+        "rLT/Size/y": "1",
+        "rLT/Maps/x1": "0",
+        "rLT/Maps/y1": "0",
+        "rLT/Maps/x2": "1",
+        "rLT/Maps/y2": "1",
+        "rRT/Size/x": "1",
+        "rRT/Size/y": "1",
+        "rRT/Maps/x1": "2",
+        "rRT/Maps/y1": "0",
+        "rRT/Maps/x2": "3",
+        "rRT/Maps/y2": "1",
+        "rLB/Size/x": "1",
+        "rLB/Size/y": "1",
+        "rLB/Maps/x1": "0",
+        "rLB/Maps/y1": "2",
+        "rLB/Maps/x2": "1",
+        "rLB/Maps/y2": "3",
+        "rRB/Size/x": "1",
+        "rRB/Size/y": "1",
+        "rRB/Maps/x1": "2",
+        "rRB/Maps/y1": "2",
+        "rRB/Maps/x2": "3",
+        "rRB/Maps/y2": "3",
+        "rT/Size/x": "4096",
+        "rT/Size/y": "1",
+        "rT/Maps/x1": "1",
+        "rT/Maps/y1": "0",
+        "rT/Maps/x2": "2",
+        "rT/Maps/y2": "1",
+        "rL/Size/x": "1",
+        "rL/Size/y": "4096",
+        "rL/Maps/x1": "0",
+        "rL/Maps/y1": "1",
+        "rL/Maps/x2": "1",
+        "rL/Maps/y2": "2",
+        "rR/Size/x": "1",
+        "rR/Size/y": "4096",
+        "rR/Maps/x1": "2",
+        "rR/Maps/y1": "1",
+        "rR/Maps/x2": "3",
+        "rR/Maps/y2": "2",
+        "rB/Size/x": "4096",
+        "rB/Size/y": "1",
+        "rB/Maps/x1": "1",
+        "rB/Maps/y1": "2",
+        "rB/Maps/x2": "2",
+        "rB/Maps/y2": "3",
+        "rF/Size/x": "4096",
+        "rF/Size/y": "4096",
+        "rF/Maps/x1": "1",
+        "rF/Maps/y1": "1",
+        "rF/Maps/x2": "2",
+        "rF/Maps/y2": "2"
+      },
+      "attributes": {
+        "Texture": {
+          "href": "/UI/DeploymentPreview/CellTexture.xdb#xpointer(/Texture)"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/Misc/Back.(BackgroundTiledTexture).xdb",
+      "target": "UI/DeploymentPreview/SelectedCell.xdb",
+      "text": {
+        "Color": "-2966928",
+        "rLT/Size/x": "1",
+        "rLT/Size/y": "1",
+        "rLT/Maps/x1": "0",
+        "rLT/Maps/y1": "0",
+        "rLT/Maps/x2": "1",
+        "rLT/Maps/y2": "1",
+        "rRT/Size/x": "1",
+        "rRT/Size/y": "1",
+        "rRT/Maps/x1": "2",
+        "rRT/Maps/y1": "0",
+        "rRT/Maps/x2": "3",
+        "rRT/Maps/y2": "1",
+        "rLB/Size/x": "1",
+        "rLB/Size/y": "1",
+        "rLB/Maps/x1": "0",
+        "rLB/Maps/y1": "2",
+        "rLB/Maps/x2": "1",
+        "rLB/Maps/y2": "3",
+        "rRB/Size/x": "1",
+        "rRB/Size/y": "1",
+        "rRB/Maps/x1": "2",
+        "rRB/Maps/y1": "2",
+        "rRB/Maps/x2": "3",
+        "rRB/Maps/y2": "3",
+        "rT/Size/x": "4096",
+        "rT/Size/y": "1",
+        "rT/Maps/x1": "1",
+        "rT/Maps/y1": "0",
+        "rT/Maps/x2": "2",
+        "rT/Maps/y2": "1",
+        "rL/Size/x": "1",
+        "rL/Size/y": "4096",
+        "rL/Maps/x1": "0",
+        "rL/Maps/y1": "1",
+        "rL/Maps/x2": "1",
+        "rL/Maps/y2": "2",
+        "rR/Size/x": "1",
+        "rR/Size/y": "4096",
+        "rR/Maps/x1": "2",
+        "rR/Maps/y1": "1",
+        "rR/Maps/x2": "3",
+        "rR/Maps/y2": "2",
+        "rB/Size/x": "4096",
+        "rB/Size/y": "1",
+        "rB/Maps/x1": "1",
+        "rB/Maps/y1": "2",
+        "rB/Maps/x2": "2",
+        "rB/Maps/y2": "3",
+        "rF/Size/x": "4096",
+        "rF/Size/y": "4096",
+        "rF/Maps/x1": "1",
+        "rF/Maps/y1": "1",
+        "rF/Maps/x2": "2",
+        "rF/Maps/y2": "2"
+      },
+      "attributes": {
+        "Texture": {
+          "href": "/UI/DeploymentPreview/CellTexture.xdb#xpointer(/Texture)"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "Textures/Interface/CommonBoxes/button_ok/Normal.xdb",
+      "target": "UI/DeploymentPreview/CellTexture.xdb",
+      "text": {
+        "Width": "3",
+        "Height": "3",
+        "NMips": "1"
+      },
+      "attributes": {
+        "SrcName": {
+          "href": ""
+        },
+        "DestName": {
+          "href": "/UI/DeploymentPreview/Cell.dds"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/Text.(WindowScrollableContainer).xdb",
+      "target": "UI/DeploymentPreview/DetailsScroll.xdb",
+      "text": {
+        "Name": "DeploymentDetailsScroll",
+        "Placement/Position/First/x": "35",
+        "Placement/Position/First/y": "445",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "755",
+        "Placement/Size/First/y": "180",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      },
+      "attributes": {
+        "Shared": {
+          "href": "/UI/DeploymentPreview/DetailsScrollShared.xdb#xpointer(/WindowScrollableContainerShared)"
+        }
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/Text.(WindowScrollableContainerShared).xdb",
+      "target": "UI/DeploymentPreview/DetailsScrollShared.xdb",
+      "clear": [
+        "Children"
+      ],
+      "attributes": {
+        "ScrollBar": {
+          "href": "/UI/DeploymentPreview/DetailsScrollBar.xdb#xpointer(/WindowScrollBar)"
+        },
+        "Border": {
+          "href": "/UI/DeploymentPreview/DetailsBorder.xdb#xpointer(/WindowSimple)"
+        }
+      },
+      "append_xml": {
+        "Children": [
+          "<Item href=\"/UI/DeploymentPreview/Details.xdb#xpointer(/WindowTextView)\"/>"
+        ]
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/TextScroll.(WindowScrollBar).xdb",
+      "target": "UI/DeploymentPreview/DetailsScrollBar.xdb",
+      "text": {
+        "Name": "DeploymentDetailsScrollBar",
+        "Placement/Size/First/y": "180"
+      }
+    },
+    {
+      "archive": "data.pak",
+      "source": "UI/CommonBoxes/TextBorder.(WindowSimple).xdb",
+      "target": "UI/DeploymentPreview/DetailsBorder.xdb",
+      "text": {
+        "Name": "DeploymentDetailsBorder",
+        "Placement/Position/First/x": "0",
+        "Placement/Position/First/y": "0",
+        "Placement/Position/Second": "true",
+        "Placement/Size/First/x": "735",
+        "Placement/Size/First/y": "180",
+        "Placement/Size/Second": "true",
+        "Placement/HorAllign/First": "EPA_LOW_END",
+        "Placement/HorAllign/Second": "true",
+        "Placement/VerAllign/First": "EPA_LOW_END",
+        "Placement/VerAllign/Second": "true"
+      }
+    },
+    {
+      "archive": "Universe_mod.pak",
+      "source": "UI/CRINFO/BUTCLOSE.(UISSendUIMessage).xdb",
+      "target": "UI/DeploymentPreview/CloseOverlay.xdb",
+      "text": {
+        "szParam/First": "DeploymentOverlay"
+      }
+    }
+  ]
+}

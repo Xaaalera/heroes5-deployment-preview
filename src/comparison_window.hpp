@@ -4,7 +4,9 @@
 #include <array>
 #include <bit>
 #include "deployment_comparison.hpp"
+#include "native_comparison_window.hpp"
 #include "../game-api/include/h5/camera_input.hpp"
+#include "../game-api/include/h5/native_ui.hpp"
 
 #pragma comment(lib, "gdi32.lib")
 
@@ -46,7 +48,9 @@ class ComparisonWindow {
         const wchar_t* ownArmy = L"\u0417\u0415\u041b\u0401\u041d\u042b\u0419 \u2014 \u0430\u0440\u043c\u0438\u044f \u0433\u0435\u0440\u043e\u044f";
         const wchar_t* realBattle = L"\u041f\u0440\u043e\u0433\u043d\u043e\u0437 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d \u0434\u043e \u043d\u0430\u0447\u0430\u043b\u0430 \u0431\u043e\u044f; \u0441\u043f\u0440\u0430\u0432\u0430 \u2014 \u043d\u0430\u0447\u0430\u043b\u044c\u043d\u0430\u044f \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430.";
         const wchar_t* realTitle = L"\u041f\u0440\u0435\u0434\u0438\u043a\u0442\u043e\u0440 \u2014 \u0440\u0430\u0437\u0431\u043e\u0440 \u0440\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0438";
-        const wchar_t* button = L"\u0420\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430 \u0432\u043e\u0439\u0441\u043a";
+        const wchar_t* button = L"\u0420\u0430\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430";
+        const wchar_t* closeButtonCaption = L"\u0417\u0430\u043a\u0440\u044b\u0442\u044c";
+        const wchar_t* ownStackPrefix = L"\u0413";
         const wchar_t* ownDescription = L"\u0410\u0440\u043c\u0438\u044f \u0433\u0435\u0440\u043e\u044f. \u041f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u043d\u0430\u0447\u0430\u043b\u044c\u043d\u044b\u0435 \u043f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u0435 \u0438 \u0447\u0438\u0441\u043b\u0435\u043d\u043d\u043e\u0441\u0442\u044c.";
         const wchar_t* terrainHint = L"\u0412 \u043a\u043b\u0435\u0442\u043a\u0435 \u2014 \u043d\u043e\u043c\u0435\u0440 \u043e\u0442\u0440\u044f\u0434\u0430. \u0428\u0442\u0440\u0438\u0445\u043e\u0432\u043a\u0430 \u2014 \u043f\u0440\u0435\u043f\u044f\u0442\u0441\u0442\u0432\u0438\u044f.";
         const wchar_t* noTerrainHint = L"\u0412 \u043a\u043b\u0435\u0442\u043a\u0435 \u2014 \u043d\u043e\u043c\u0435\u0440 \u043e\u0442\u0440\u044f\u0434\u0430. \u041f\u0440\u0435\u043f\u044f\u0442\u0441\u0442\u0432\u0438\u044f \u043d\u0435 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u044b.";
@@ -76,6 +80,34 @@ class ComparisonWindow {
     inline static const Strings text{};
     inline static HWND window = nullptr;
     inline static HWND launcher = nullptr;
+    inline static uint32_t nativeRoot = 0, nativeLauncher = 0;
+    inline static HWND nativeOwner = nullptr;
+    inline static bool nativeChecked = false, nativeShown = false;
+    static bool ReadUiMemory(uint32_t address, void* output, size_t bytes) {
+        __try { memcpy(output,reinterpret_cast<const void*>(address),bytes); return true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    static bool FindNativeLauncher(HWND owner) {
+        auto reader=ReadUiMemory;
+        uint32_t root=0;
+        if (!h5::ui::ReadNativeCombatRoot(reader,root)) { return false; }
+        if (root!=nativeRoot) { nativeRoot=root;nativeLauncher=0;nativeChecked=false;nativeShown=false; }
+        nativeOwner=owner;
+        if (nativeChecked) { return nativeLauncher!=0; }
+        nativeChecked=true;
+        std::array<uint32_t,128> children{};uint32_t count=0;
+        if (!h5::ui::ReadNativeWindowChildren(reader,root,children,count)) { nativeChecked=false;return false; }
+        for (uint32_t index=0;index<count;++index) {
+            h5::ui::NativeWindowSnapshot child{};
+            if (h5::ui::ReadNativeWindow(reader,children[index],child) &&
+                strcmp(child.name,"DeploymentBreakdownButton")==0) {
+                nativeLauncher=children[index];
+                SetPropW(owner,L"H5Comparison.NativeLauncher.v1",reinterpret_cast<HANDLE>(uintptr_t{nativeLauncher}));
+                return true;
+            }
+        }
+        return false;
+    }
     inline static bool closePressed = false;
     inline static HINSTANCE instance = nullptr;
     inline static int selected = 0;
@@ -130,6 +162,11 @@ class ComparisonWindow {
     inline static constexpr int quantities[6] = {40, 80, 12, 100, 55, 3};
 
     static int RowLabel(int row) { return Rows == DefaultRows ? rowLabels[row] : Rows - row; }
+    static NativeComparisonContent NativeContent() {
+        return {Columns,Rows,currentBattleId,realEntryCount,realNeutralCount,
+            realPositions,realVisible,realDetails,realStatus,&realField,RowLabel,
+            text.heading,text.forecast,text.actual,text.closeButtonCaption,text.ownStackPrefix};
+    }
     static void Label(HDC canvas, RECT area, const wchar_t* value, COLORREF color,
         UINT flags = DT_LEFT | DT_TOP | DT_WORDBREAK) {
         SetTextColor(canvas, color);
@@ -624,10 +661,17 @@ public:
                 selected = index; break;
             }
         }
-        const auto owner = launcher ? GetParent(launcher) : nullptr;
+        const auto owner = nativeOwner ? nativeOwner : (launcher ? GetParent(launcher) : nullptr);
         if (owner && reinterpret_cast<uintptr_t>(GetPropW(owner, L"H5DeploymentComparison.OpenBattle.v1")) == currentBattleId) {
             const int saved = SavedLayoutValue(owner, 4, selected);
             if (saved >= 0 && static_cast<uint32_t>(saved) < realEntryCount) { selected = saved; }
+        }
+        if (nativeOwner && nativeRoot && NativeComparisonWindow::Available(nativeOwner,nativeRoot)) {
+            const auto content=NativeContent();
+            if (!NativeComparisonWindow::Show(nativeOwner,nativeRoot,content,selected)) { return false; }
+            if (window) { DestroyWindow(window); }
+            SetPropW(nativeOwner,L"H5DeploymentComparison.OpenBattle.v1",reinterpret_cast<HANDLE>(uintptr_t{currentBattleId}));
+            return true;
         }
         const bool shown = Show();
         if (shown && currentBattleId) {
@@ -651,36 +695,28 @@ public:
         return false;
     }
     static bool ShowLauncher(HWND owner) {
-        if (!realBattleAvailable || !owner || !Register()) { return false; }
-        if (!launcher) {
-            SetWindowLongPtrW(owner, GWL_STYLE, GetWindowLongPtrW(owner, GWL_STYLE) | WS_CLIPCHILDREN);
-            launcher = CreateWindowExW(0, L"H5DeploymentComparison", text.button, WS_CHILD | WS_CLIPSIBLINGS,
-                0, 0, 230, 36, owner, nullptr, instance, nullptr);
+        if (!realBattleAvailable || !owner || !FindNativeLauncher(owner)) { return false; }
+        if (!NativeComparisonWindow::UpdateLauncher(owner,nativeRoot,nativeLauncher,text.button)) { return false; }
+        if (!nativeShown) {
+            const auto changed=h5::ui::SetNativeWindowVisible(owner,nativeLauncher,true);
+            SetPropW(owner,L"H5Comparison.NativeShowState.v1",reinterpret_cast<HANDLE>(uintptr_t{static_cast<uint32_t>(changed.state)+1}));
+            SetPropW(owner,L"H5Comparison.NativeUiThread.v1",reinterpret_cast<HANDLE>(uintptr_t{GetCurrentThreadId()}));
+            if (changed.state!=h5::ui::NativeWindowMutationState::Completed) { return false; }
+            nativeShown=true;
         }
-        if (!launcher) { return false; }
-        RefreshOwnerLayout(owner);
-        if (!h5::ui::RegisterInputPanel(launcher)) { DestroyWindow(launcher); return false; }
-        ShowWindow(launcher, SW_SHOW); BringWindowToTop(launcher);
-        InvalidateRect(launcher, nullptr, FALSE);
-        if (!window && currentBattleId && reinterpret_cast<uintptr_t>(GetPropW(owner,
+        if (!window && !NativeComparisonWindow::IsOpen() && currentBattleId && reinterpret_cast<uintptr_t>(GetPropW(owner,
             L"H5DeploymentComparison.OpenBattle.v1")) == currentBattleId) { ShowBattle(); }
         return true;
     }
     static void RefreshOwnerLayout(HWND owner) {
-        if (!launcher || !owner || GetParent(launcher) != owner) { return; }
-        RECT area{}, previous{};
-        if (!GetClientRect(owner, &area) || !GetWindowRect(launcher, &previous)) { return; }
-        MapWindowPoints(nullptr, owner, reinterpret_cast<POINT*>(&previous), 2);
-        // Universe CombatArena-Heavy/ATBBar: bottom alignment, y=-9,
-        // shared height=162, horizontal margins=21/284. Leave an 8px gap.
-        // This follows the default resource layout; custom HUD scaling still
-        // requires live acceptance against the actual game UI bounds.
-        const LONG left = (std::max)(0L, (area.right + 21 - 284 - 230) / 2);
-        const LONG top = (std::max)(0L, area.bottom - 9 - 162 - 8 - 36);
-        const RECT placement{left, top, left + 230, top + 36};
-        if (EqualRect(&previous, &placement)) { return; }
-        SetWindowPos(launcher, nullptr, left, top, 230, 36,
-            SWP_NOACTIVATE | SWP_NOZORDER);
+        if (!realBattleAvailable || !owner || !ShowLauncher(owner)) { return; }
+        NativeComparisonWindow::Tick(NativeContent(),selected);
+        const auto consumed=h5::ui::ConsumeNativeButtonState(owner,nativeLauncher,1,0);
+        if (consumed.state==h5::ui::NativeWindowMutationState::Completed) {
+            const auto previous=reinterpret_cast<uintptr_t>(GetPropW(owner,L"H5Comparison.NativeActivations.v1"));
+            SetPropW(owner,L"H5Comparison.NativeActivations.v1",reinterpret_cast<HANDLE>(previous+1));
+            ShowBattle();
+        }
     }
     static bool Show() {
         HWND owner = nullptr;
@@ -705,11 +741,16 @@ public:
         SaveLayout(window);
         return true;
     }
-    static void Close() {
+    static bool Close() {
+        if (!NativeComparisonWindow::Reset()) { return false; }
+        if (nativeOwner && nativeLauncher) { h5::ui::SetNativeWindowVisible(nativeOwner,nativeLauncher,false); }
+        if (nativeOwner) { RemovePropW(nativeOwner,L"H5Comparison.NativeLauncher.v1"); }
+        nativeRoot=0;nativeLauncher=0;nativeOwner=nullptr;nativeChecked=false;nativeShown=false;
         if (window) { DestroyWindow(window); }
         if (launcher) { DestroyWindow(launcher); }
         realBattleAvailable = false;
         if (instance && UnregisterClassW(L"H5DeploymentComparison", instance)) { instance = nullptr; }
+        return true;
     }
 };
 }

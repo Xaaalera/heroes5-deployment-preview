@@ -1222,7 +1222,7 @@ uint32_t RetirePreviewUI(const heroes5_sdk::EngineContext* context, bool replaci
         context->residentBytes!=heroes5_sdk::ContextCapacity || !context->residentData) { return 0; }
     DWORD process=0;
     if (GetWindowThreadProcessId(context->window,&process)!=GetCurrentThreadId() || process!=GetCurrentProcessId()) { return 0; }
-    h5_preview::ComparisonWindow::Close();
+    if (!h5_preview::ComparisonWindow::Close()) { return 0; }
     if (!EnsurePreviewStorage(*context)) { return 0; }
     auto& state=*reinterpret_cast<PublicProjectionState*>(context->residentData+PublicProjectionOffset);
     if (state.version>1 || state.publicCount<0 || state.publicCount>7 || state.uiVersion>4 ||
@@ -1257,7 +1257,7 @@ extern "C" uint32_t __cdecl Heroes5PluginPrepareReplace(const heroes5_sdk::Engin
 #pragma comment(linker,"/EXPORT:Heroes5PluginFinalize=_Heroes5PluginFinalize")
 #pragma comment(linker,"/EXPORT:Heroes5PluginPrepareReplace=_Heroes5PluginPrepareReplace")
 extern "C" uint32_t __cdecl Heroes5PluginWindowInput(const heroes5_sdk::WindowInputContext* input) {
-    if (!input || input->size!=sizeof(*input) || input->version!=1 || input->message!=WM_LBUTTONDBLCLK) { return 0; }
+    if (!input || input->size!=sizeof(*input) || input->version!=1 || (input->message!=WM_LBUTTONDBLCLK && input->message!=WM_RBUTTONDBLCLK)) { return 0; }
     const auto& context=input->engine;DWORD process=0;
     if (context.size!=sizeof(context) || context.version!=2 || context.residentSchema!=6 ||
         context.residentBytes!=heroes5_sdk::ContextCapacity || !context.residentData ||
@@ -1269,7 +1269,12 @@ extern "C" uint32_t __cdecl Heroes5PluginWindowInput(const heroes5_sdk::WindowIn
     state.Load();
     if (g_projectionScreen && (*g_projectionScreen!=0xe1da84 ||
         g_projectionScreen[0x488/4]!=reinterpret_cast<uint32_t>(g_placementOwner))) { return 0; }
-    ObserveProjectionWindowInput(input->message,input->lparam);state.Save();return 1;
+    const bool rightClick=ObserveProjectionWindowInput(input->message,input->lparam);
+    state.Save();
+    // Let the original double-click finish before the normal native card path.
+    // Engine callbacks then run outside this borrowed payload dispatch.
+    if (rightClick) { return PostMessageW(context.window,WM_RBUTTONDOWN,input->wparam,input->lparam) ? 1u : 0u; }
+    return 1;
 }
 #pragma comment(linker,"/EXPORT:Heroes5PluginWindowInput=_Heroes5PluginWindowInput")
 extern "C" const heroes5_sdk::PluginApi* __cdecl Heroes5PluginQuery() {
