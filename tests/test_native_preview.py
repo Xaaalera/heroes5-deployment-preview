@@ -6261,6 +6261,50 @@ int main() {
     CaptureKnownHeroModifiers(owner);
     assert(g_sourceStrengthInputs[0].metadata[7]==1 && g_sourceStrengthInputs[1].metadata[7]==2);
     assert(g_sourceStrengthInputs[2].metadata[7]==0);
+
+    // Exact disclosed neutral composition keeps the defensive share stable
+    // when only the known opposing melee quantity changes. The original EXE
+    // scorer gives neutral total100/ranged40 for these normalized unit terms.
+    g_superadminEnabled=false;
+    memset(definitions,0,sizeof(definitions));
+    const int creatureTypes[]={1,2};
+    for(int creatureType:creatureTypes) {
+        definitions[creatureType][0xdc/4]=1;
+        definitions[creatureType][0x64/4]=1;
+        definitions[creatureType][0x50/4]=1;definitions[creatureType][0x54/4]=1;
+        definitions[creatureType][0x44/4]=1;definitions[creatureType][0x48/4]=1;
+    }
+    definitions[2][0x4c/4]=1;
+    g_publicCount=2;g_publicTypes[0]=1;g_publicTypes[1]=2;
+    g_publicKnownCounts[0]=60;g_publicKnownCounts[1]=40;
+    owner[0x98/4]=0;owner[3]=reinterpret_cast<uint32_t>(stacks);
+    owner[4]=reinterpret_cast<uint32_t>(stacks+2);
+    g_placementOwner=owner;
+    stacks[0][7]=1;stacks[1][7]=2;stacks[1][2]=0;
+    const int knownQuantities[]={10,1000};
+    for(int knownQuantity:knownQuantities) {
+        stacks[0][2]=knownQuantity;
+        PrepareKnownHeroPolicy();assert(g_predictedDefensive);
+        g_publicKnownCounts[0]=80;g_publicKnownCounts[1]=20;
+        PrepareKnownHeroPolicy();assert(!g_predictedDefensive); // strict share equality
+        g_publicKnownCounts[0]=81;g_publicKnownCounts[1]=19;
+        PrepareKnownHeroPolicy();assert(!g_predictedDefensive);
+        g_publicKnownCounts[0]=79;g_publicKnownCounts[1]=21;
+        PrepareKnownHeroPolicy();assert(g_predictedDefensive);
+        g_publicKnownCounts[0]=60;g_publicKnownCounts[1]=40;
+    }
+    // The known ranged estimate retains its existing1.5 action multiplier.
+    // A mixed own army avoids an all-ranged capability assumption here.
+    stacks[0][2]=1;stacks[1][2]=20;
+    g_publicKnownCounts[0]=61;g_publicKnownCounts[1]=39;
+    PrepareKnownHeroPolicy();assert(!g_predictedDefensive); //39/30 ==1.3, strict
+    g_publicKnownCounts[0]=60;g_publicKnownCounts[1]=40;
+    PrepareKnownHeroPolicy();assert(g_predictedDefensive);
+    g_publicKnownCounts[0]=62;g_publicKnownCounts[1]=38;
+    PrepareKnownHeroPolicy();assert(!g_predictedDefensive);
+    // An unrepresentable estimated neutral total must not enter the int scorer.
+    stacks[0][2]=10;stacks[1][2]=0;g_publicKnownCounts[0]=INT_MAX;
+    PrepareKnownHeroPolicy();assert(!g_predictedDefensive);
 }
 '''
         driver = driver.replace('0xbf9b80', 'reinterpret_cast<uintptr_t>(&::Score)').replace(

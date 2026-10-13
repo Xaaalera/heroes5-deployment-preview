@@ -545,6 +545,7 @@ void PrepareKnownHeroPolicy() {
             double defenceWeight = 0;
             double healthWeight = 0;
             double enemyDamage = 0;
+            double enemyAttackWeight = 0;
             double enemyShooterDamage = 0;
             double enemyShooterAttackWeight = 0;
             for (LONG index = 0; index < g_publicCount; ++index) {
@@ -558,6 +559,7 @@ void PrepareKnownHeroPolicy() {
                 const double damage = estimatedQuantity *
                     (static_cast<double>(creature[0x50 / 4]) + creature[0x54 / 4]) / 2;
                 enemyDamage += damage;
+                enemyAttackWeight += damage * creature[0x44 / 4];
                 if (creature[0x4c / 4] > 0) {
                     const double shooterDamage = conservativeQuantity *
                         (static_cast<double>(creature[0x50 / 4]) + creature[0x54 / 4]) / 2;
@@ -582,24 +584,38 @@ void PrepareKnownHeroPolicy() {
                 g_estimatedSpreadDenominator = denominator > 0 ? static_cast<uint32_t>(denominator) : 0;
                 const float spreadThreshold = *reinterpret_cast<const float*>(settings + 0xbf8);
                 g_useSpreadRows = denominator > 0 && 24.0 / denominator > spreadThreshold;
-                if (enemyDamage > 0 && enemyShooterDamage > 0 && knownHealth > 0) {
-                    const double enemyShooterPower = enemyShooterDamage * factorAgainst(
-                        enemyShooterAttackWeight / enemyShooterDamage, knownDefenceWeight / knownHealth);
-                    // 0xa2fd40 compares their ranged damage to the opposing
-                    // hero army's total power, not the neutral army's total.
-                    const double knownTotalPower = knownDamage * 1.5 * factorAgainst(
-                        attack, defenceWeight / healthWeight);
-                    const double knownShooterPower = knownShooterDamage > 0
-                        ? knownShooterDamage * 1.5 * factorAgainst(
-                            knownShooterAttackWeight / knownShooterDamage
-                                + (g_knownHeroAttack >= 0 ? g_knownHeroAttack : 0),
-                            defenceWeight / healthWeight)
-                        : 0;
+                if (enemyDamage > 0 && enemyDamage < INT_MAX && enemyShooterDamage > 0 && knownHealth > 0) {
+                    // Keep the ordinary estimates and admitted inputs, but use
+                    // the reconstructed defensive scorer and its neutral total.
+                    // Numeric hero modifiers, conditional extra power and rare
+                    // capability overrides remain outside this estimate.
+                    PlacementAggregate estimatedNeutral{};
+                    estimatedNeutral.damage = static_cast<int>(enemyDamage);
+                    estimatedNeutral.attack = static_cast<float>(enemyAttackWeight / enemyDamage);
+                    estimatedNeutral.multiplier = 1.0f;
+                    estimatedNeutral.eligibleDefence = static_cast<float>(defenceWeight / healthWeight);
+                    estimatedNeutral.shooterDamage = static_cast<float>(enemyShooterDamage);
+                    estimatedNeutral.shooterAttack = static_cast<float>(enemyShooterAttackWeight / enemyShooterDamage);
+                    PlacementAggregate knownArmy{};
+                    knownArmy.damage = static_cast<int>(knownDamage);
+                    knownArmy.attack = static_cast<float>(attack);
+                    knownArmy.multiplier = 1.5f;
+                    knownArmy.eligibleDefence = static_cast<float>(knownDefenceWeight / knownHealth);
+                    knownArmy.shooterDamage = static_cast<float>(knownShooterDamage);
+                    knownArmy.shooterAttack = knownShooterDamage > 0
+                        ? static_cast<float>(knownShooterAttackWeight / knownShooterDamage
+                            + (g_knownHeroAttack >= 0 ? g_knownHeroAttack : 0)) : 0;
+                    const float increase = *reinterpret_cast<const float*>(settings + 0x1d0);
+                    const float decrease = *reinterpret_cast<const float*>(settings + 0x1d8);
+                    const int enemyTotalPower = CalculateDefensivePower(estimatedNeutral, knownArmy, increase, decrease, false);
+                    const int enemyShooterPower = CalculateDefensivePower(estimatedNeutral, knownArmy, increase, decrease, true);
+                    const int knownShooterPower = CalculateDefensivePower(knownArmy, estimatedNeutral, increase, decrease, true);
                     const float shareThreshold = *reinterpret_cast<const float*>(settings + 0xbfc);
                     const float advantageThreshold = *reinterpret_cast<const float*>(settings + 0xc00);
-                    g_predictedDefensive = knownTotalPower > 0
-                        && enemyShooterPower / knownTotalPower > shareThreshold
-                        && (knownShooterPower == 0 || enemyShooterPower / knownShooterPower > advantageThreshold);
+                    g_predictedDefensive = enemyTotalPower > 0 && enemyShooterPower > 0 && knownShooterPower >= 0
+                        && PlacementRatio(enemyShooterPower, enemyTotalPower) > shareThreshold
+                        && (knownShooterPower == 0 ? 100.0f
+                            : PlacementRatio(enemyShooterPower, knownShooterPower)) > advantageThreshold;
                 }
             }
         }
