@@ -1,0 +1,111 @@
+{
+  "diffHash": "cef0e717ecd3bc2b2df99b8edc5252b53af5cab9fbf9502773f095743c8dc2ee",
+  "commitSha": "4c69cc84449012eb1fdabe318fe3418693094b15",
+  "perAgent": {
+    "craft": {
+      "score": 10,
+      "verdict": "PASS",
+      "reviewer_verdict": "PASS",
+      "reviewer": "/root/melee_docs_newcomer",
+      "evidence": {
+        "record": "ordinary-defensive-normalization-source-craft-final-supplement.json",
+        "sha256": "9f386baa07cb09023fcf3e98a9bfa9465aa6c325ce4f1c6b581fb32822974caf",
+        "publication_head": "4c69cc84449012eb1fdabe318fe3418693094b15",
+        "scope": "Exact three frozen worktree file hashes match committed content; reviewers did not claim to review a later commit identifier"
+      }
+    },
+    "architecture": {
+      "score": 10,
+      "verdict": "PASS",
+      "reviewer_verdict": "PASS",
+      "reviewer": "/root/melee_docs_accuracy",
+      "evidence": {
+        "record": "ordinary-defensive-normalization-source-architecture-final-supplement.json",
+        "sha256": "b320f46c5d48f19f0a3adb011922717628f618c0dfc120b2a898463e9c0cb8ff",
+        "publication_head": "4c69cc84449012eb1fdabe318fe3418693094b15",
+        "scope": "Exact three frozen worktree file hashes match committed content; reviewers did not claim to review a later commit identifier"
+      }
+    },
+    "tests": {
+      "score": 9,
+      "verdict": "PASS",
+      "reviewer_verdict": "PASS_EXACT_HASH_SUPPLEMENT",
+      "reviewer": "/root/melee_docs_steps",
+      "evidence": {
+        "record": "ordinary-defensive-normalization-source-tests-supplement.json",
+        "sha256": "362b9931069b21c8bd722618751abc7c87c7519c892488867ae132a556f5ac72",
+        "publication_head": "4c69cc84449012eb1fdabe318fe3418693094b15",
+        "scope": "Exact three frozen worktree file hashes match committed content; reviewers did not claim to review a later commit identifier"
+      }
+    },
+    "docs": {
+      "score": 10,
+      "verdict": "PASS",
+      "reviewer_verdict": "PASS",
+      "reviewer": "/root/melee_docs_structure",
+      "evidence": {
+        "record": "ordinary-defensive-normalization-source-docs-closure.json",
+        "sha256": "127dde9073f3026e5fd5f40d842ea86f7ce7a8bf485e7302efa5774120198cc6",
+        "publication_head": "4c69cc84449012eb1fdabe318fe3418693094b15",
+        "scope": "Exact three frozen worktree file hashes match committed content; reviewers did not claim to review a later commit identifier"
+      },
+      "review": {
+        "reviewer": "/root/melee_docs_structure",
+        "files": [
+          "AGENTS.md",
+          "CONTRIBUTING.md",
+          "README.md"
+        ],
+        "criteria": {
+          "purpose": {
+            "verdict": "PASS",
+            "evidence": "The RU/EN README remains a short entry point for the predictor and directs players to the published package and canonical guide; the private native normalization adds no public control."
+          },
+          "structure": {
+            "verdict": "PASS",
+            "evidence": "The two corrected paragraphs remain under Documentation. The release index is the package entry point and the knowledge guide owns current results and installation details."
+          },
+          "specificity": {
+            "verdict": "PASS",
+            "evidence": "Both README languages now say the guide records the current published package results and limits. The source delta retains already documented defensive checks without claiming candidate-22 statistics."
+          },
+          "reproducibility": {
+            "verdict": "PASS",
+            "evidence": "The release index and canonical guide provide the player route; README preserves normal no-SDK startup and developer setup links. The private final campaign is not presented as public acceptance."
+          },
+          "evidence": {
+            "verdict": "PASS",
+            "evidence": "README, source and test hashes match revision-4 freeze. AGENTS and CONTRIBUTING retain their prior accepted hashes. The alpha.1/new-guide mismatch is removed in both languages."
+          },
+          "applicability": {
+            "verdict": "PASS",
+            "evidence": "README links the current release index while the guide tracks alpha.2; working-branch candidate-22 changes remain separate from the published archive."
+          },
+          "translations": {
+            "verdict": "PASS",
+            "evidence": "The revised RU and EN paragraphs agree on release-index destination, normal launch, pre/post-Start behavior, current-guide results and working-branch boundary."
+          },
+          "maintenance": {
+            "verdict": "PASS",
+            "evidence": "Canonical knowledge pages remain the live source for release results; README gives stable pointers. Only two README paragraphs changed since prior review."
+          }
+        },
+        "findings": []
+      }
+    },
+    "security": {
+      "score": 10,
+      "verdict": "PASS",
+      "reviewer_verdict": "PASS",
+      "reviewer": "/root/melee_docs_translation",
+      "evidence": {
+        "record": "ordinary-defensive-normalization-source-security-closure.json",
+        "sha256": "abfcfd8ee5f11feecc6a80daf70c36b40013fdbdae22c35d9b5beff545d917a1",
+        "publication_head": "4c69cc84449012eb1fdabe318fe3418693094b15",
+        "scope": "Exact three frozen worktree file hashes match committed content; reviewers did not claim to review a later commit identifier"
+      }
+    }
+  },
+  "overall": "PASS",
+  "timestamp": "2026-10-13T13:33:39.951Z"
+}
